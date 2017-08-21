@@ -170,17 +170,20 @@ function assignUVs(geometry) {
 
 const scene = setupScene();
 
+function flatFloor(vector){
+  return vector.y;
+}
+
+function densityGenerator(vector){
+  let density = 0;
+  density = flatFloor(vector);
+  density  -=  simplex.noise3D(vector.x,vector.y,vector.z) * 0.1; 
+  return density;
+}
 
 
-//from https://stackoverflow.com/questions/10756313/javascript-jquery-map-a-range-of-numbers-to-another-range-of-numbers
-function mapRange(n,i,o,r,t){return i>o?i>n?(n-i)*(t-r)/(o-i)+r:r:o>i?o>n?(n-i)*(t-r)/(o-i)+r:t:void 0}
-var clamp = (...v) => v.sort((a,b) => a-b)[1];
-var d = 32;
-var dims = [d, d, d];
-var b = 2;
-var bounds = [[-b, -b, -b ], [b, b, b]];
-var gridpos = 0;
-var map = function(p) {
+
+var oldMap = function(p) {
   //return  simplex.noise3D(p.x,p.y,p.z);
  // return Math.sqrt(p.x * p.x + p.y * p.y + p.z * p.z) - 1;
  // return Math.sqrt(p.x * p.x + p.y * p.y   - simplex.noise3D(p.x,p.y,p.z)) - 1; //tunnel
@@ -204,17 +207,31 @@ var map = function(p) {
 };
 
 
-function makeObj(){
-  var geom1 = new THREE.IsosurfaceGeometry(dims, map, bounds);
-  assignUVs(geom1);
-  geom1.scale(20,20,20);
-  var obj = new THREE.Mesh(geom1);
-  obj.material.side = THREE.DoubleSide;
-  obj.material = passMat
-  obj.material.extensions.derivatives = true
-  
-  return obj;
+function chunk(gridpos){
+  this.d = 32;
+  this.dims = [this.d, this.d, this.d];
+  this.b = 2;
+  this.bounds = [[-this.b, -this.b, -this.b ], [this.b, this.b, this.b]];
+  this.gridpos = gridpos;
+  this.gridposadjust = new THREE.Vector3(gridpos.x,gridpos.y,gridpos.z);
+  this.gridposadjust.multiply(new THREE.Vector3(1.876 * 2, 1.876 * 2,1.876 * 2));
+  console.log(this.gridpos,this.gridposadjust);
+  const self = this; //nasty
+  this.map = function(p) {
+    return densityGenerator(p.add(self.gridposadjust));
+  }
+  this.makeObj();
 
+}
+
+chunk.prototype.makeObj = function(){
+  let geom = new THREE.IsosurfaceGeometry(this.dims, this.map, this.bounds);
+  assignUVs(geom);
+  geom.scale(1,1,1);
+  this.obj = new THREE.Mesh(geom);
+  this.obj.material.side = THREE.DoubleSide;
+  this.obj.material = passMat
+  this.obj.material.extensions.derivatives = true
 }
 
 
@@ -245,8 +262,8 @@ player.addComponent(Physics);
 player.addComponent(Graphics);
 player.addComponent(WASD);
 
-player.position.y = 8;
-player.position.z = 20;
+player.position.y = 2;
+player.position.z = 10;
 
 
 // procedural deformation texture
@@ -264,25 +281,15 @@ const deformMat = new THREE.ShaderMaterial({
 });
 
 function ready(){
-  const obj = makeObj();
-  gridpos++
-  const obj2 = makeObj();
-  gridpos++
-  const obj3 = makeObj();
-  gridpos++
-  const obj4 = makeObj();
-  gridpos++
-  const obj5 = makeObj();
-  scene.add(obj);
-  scene.add(obj2);
-  scene.add(obj3);
-  scene.add(obj4);
-  scene.add(obj5);
-
-  obj2.position.set(0,0,-68);
-  obj3.position.set(0,0,-68 * 2);
-  obj4.position.set(0,0,-68 * 3);
-  obj5.position.set(0,0,-68 * 4);
+  for (let i = -2;i<2; i++){
+    for (let j = 0;j<1; j++){
+      for (let k = -2;k<2; k++){
+        const c = new chunk(new THREE.Vector3(i,j,k));
+        scene.add(c.obj);
+        c.obj.position.set(i * 3.752  ,j * 3.752,k * 3.752);
+      }
+    }
+   }
 }
 
 const passMat = new THREE.ShaderMaterial({
