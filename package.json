@@ -1,7 +1,7 @@
 {
-  "name": "gameskel",
+  "name": "isoland",
   "version": "0.0.0",
-  "description": "",
+  "description": "iso voxel experiment",
   "main": "",
   "dependencies": {
     "cannon": "^0.6.2",
