@@ -28,6 +28,9 @@ const glslify = require('glslify');
 
 const simplex = new SimplexNoise();
 
+const adjust = 1.935;
+//const adjust = 1.876;
+
 var normalMap = THREE.ImageUtils.loadTexture('dist/normal.jpg', undefined, ready)
 normalMap.repeat.set(0.1, 0.1);
 normalMap.wrapS = normalMap.wrapT = THREE.MirroredRepeatWrapping
@@ -174,10 +177,70 @@ function flatFloor(vector){
   return vector.y;
 }
 
+function between(v,p,d){
+  let isBetween = (v < p + d && v > p - d)
+  return isBetween
+}
+
+function betweenVec(v,p,d){
+  
+  let isBetween = (between(v.x,p.x,d.x) && between(v.y,p.y,d.y) && between(v.z,p.z,d.z));
+  return isBetween
+
+}
+
+function wall(vector,position,dimension){
+  let object = 0;
+  if (betweenVec(vector,position,dimension)){
+    object  = simplex.noise3D(vector.x,vector.y,vector.z);
+  }
+  return object
+}
+
+function sdBox( p, b ,s)
+{
+  let d = {}
+  d.x = Math.abs(p.x / s) - b.x;
+  d.y = Math.abs(p.y / s) - b.y;
+  d.z = Math.abs(p.z / s) - b.z;
+  return (Math.min(Math.max(d.x,Math.max(d.y,d.z)),0.0) + Math.max(d.x,0.0) + Math.max(d.y,0.0) + Math.max(d.z,0.0)) * s;
+}
+
+
+function sphere(vector){
+  let object  = Math.sqrt(vector.x * vector.x + vector.y * vector.y - vector.z * vector.z) - 1;
+  return object
+}
+
+function bendyWall(vector, axis, frequency, amp, dims,inf){
+  let anglevec = vector.clone();
+  anglevec.applyAxisAngle(axis, Math.sin(frequency * vector.z) * amp);
+  if (inf){anglevec.z = 1} 
+  let density = sdBox(new THREE.Vector3(anglevec.x,anglevec.y,anglevec.z), dims,1);
+  return density
+}
+
 function densityGenerator(vector){
-  let density = 0;
-  density = flatFloor(vector);
-  density  -=  simplex.noise3D(vector.x,vector.y,vector.z) * 0.1; 
+  let density = flatFloor(vector);
+  //density = Math.min(density,bendyWall(new THREE.Vector3(vector.x,vector.y,vector.z),new THREE.Vector3(0,0.1,0) , 1.5 , 1. ,new THREE.Vector3(0.2,1.2,1),true));
+  density = Math.min(density,bendyWall(new THREE.Vector3(vector.x,vector.y,vector.z),new THREE.Vector3(0,0.4,0) , 0.2 , 1. ,new THREE.Vector3(0.2,0.8,1),true));
+  density = Math.min(density,bendyWall(new THREE.Vector3(vector.x + 1,vector.y,vector.z),new THREE.Vector3(0,0.4,0) , 0.2 , 1. ,new THREE.Vector3(0.2,0.8,1),true));
+   //density = Math.min(density,bendyWall(new THREE.Vector3(vector.x+2,vector.y,vector.z),new THREE.Vector3(0,0.2,0) , 1.5 , 1. ,new THREE.Vector3(0.2,0.3,1),true));
+  let ruin = bendyWall(new THREE.Vector3(vector.x+4,vector.y,vector.z),new THREE.Vector3(vector.x,vector.y+1,vector.z) , 0.1 , 1. ,new THREE.Vector3(1,1,2),true);
+  ruin = Math.max(ruin, -sdBox(new THREE.Vector3(vector.x + 4,vector.y,vector.z), new THREE.Vector3(0.8,2.0,0.8),1));
+  ruin = Math.max(ruin, -sdBox(new THREE.Vector3(vector.x + 3.5,vector.y,vector.z), new THREE.Vector3(1.0,0.5,0.2),1));
+  //density = Math.min(density,ruin);
+  //density = bendyWall(new THREE.Vector3(vector.x,vector.y,vector.z), 0.5 , 1. ,new THREE.Vector3(0.2,0.8,1),true);
+  //density -= wall(vector, new THREE.Vector3(1,1,1),new THREE.Vector3(1,1,6));
+  // if (vector.x > Math.abs(Math.cos(vector.z)) && vector.x < Math.abs(Math.cos(vector.z)) + 0.2 && vector.y < 1.){
+   // density -= pillar(vector) * Math.abs(Math.sin(vector.z * 0.5) * 3 )
+ // };
+ 
+  
+  
+
+  if (density >0)  {density +=  simplex.noise3D(vector.x,vector.y,vector.z) * 0.1}; 
+  if (density <=0)  {density +=  simplex.noise3D(vector.x,vector.y,vector.z) * 0.1}; 
   return density;
 }
 
@@ -214,8 +277,7 @@ function chunk(gridpos){
   this.bounds = [[-this.b, -this.b, -this.b ], [this.b, this.b, this.b]];
   this.gridpos = gridpos;
   this.gridposadjust = new THREE.Vector3(gridpos.x,gridpos.y,gridpos.z);
-  this.gridposadjust.multiply(new THREE.Vector3(1.876 * 2, 1.876 * 2,1.876 * 2));
-  console.log(this.gridpos,this.gridposadjust);
+  this.gridposadjust.multiply(new THREE.Vector3(adjust * 2, adjust * 2,adjust * 2));
   const self = this; //nasty
   this.map = function(p) {
     return densityGenerator(p.add(self.gridposadjust));
@@ -223,11 +285,11 @@ function chunk(gridpos){
   this.makeObj();
 
 }
-
+const scale = 10
 chunk.prototype.makeObj = function(){
   let geom = new THREE.IsosurfaceGeometry(this.dims, this.map, this.bounds);
   assignUVs(geom);
-  geom.scale(1,1,1);
+  geom.scale(scale,scale,scale);
   this.obj = new THREE.Mesh(geom);
   this.obj.material.side = THREE.DoubleSide;
   this.obj.material = passMat
@@ -238,6 +300,17 @@ chunk.prototype.makeObj = function(){
 // physics
 
 const world = setupWorld();
+
+
+  const body = new CANNON.Body({
+    mass: 0,
+     position: new CANNON.Vec3(0, 0, 0), // m 
+    shape: new CANNON.Plane(100),
+  });
+
+  var rot = new CANNON.Vec3(1,0,0)
+  body.quaternion.setFromAxisAngle(rot, -Math.PI/2)
+  world.addBody(body);
 
 
 //  canvas for rendering
@@ -262,7 +335,7 @@ player.addComponent(Physics);
 player.addComponent(Graphics);
 player.addComponent(WASD);
 
-player.position.y = 2;
+player.position.y = 4;
 player.position.z = 10;
 
 
@@ -281,12 +354,12 @@ const deformMat = new THREE.ShaderMaterial({
 });
 
 function ready(){
-  for (let i = -2;i<2; i++){
+  for (let i = -1;i<2; i++){
     for (let j = 0;j<1; j++){
-      for (let k = -2;k<2; k++){
+      for (let k = -1;k<2; k++){
         const c = new chunk(new THREE.Vector3(i,j,k));
         scene.add(c.obj);
-        c.obj.position.set(i * 3.752  ,j * 3.752,k * 3.752);
+        c.obj.position.set(i * adjust * 2 * scale ,j * adjust * 2 * scale ,k * adjust * 2 * scale);
       }
     }
    }
@@ -395,6 +468,9 @@ resize();
 
 // keyboard input
 
+
+
+
 kd.W.down(() => {
   ents.queryComponents([WASD]).forEach((each) => {
     each.physics.body.applyLocalImpulse(
@@ -459,8 +535,8 @@ function setupCamera() {
 
 function setupWorld() {
   const wor = new CANNON.World();
-  // wor.gravity = new CANNON.Vec3(0, -9.82, 0) // m/s²
-  wor.gravity = new CANNON.Vec3(0, 0, 0); // m/s²
+  // wor.gravity = new CANNON.Vec3(0, -0.1, 0) // m/s²
+  //wor.gravity = new CANNON.Vec3(0, 0, 0); // m/s²
 
   wor.broadphase = new CANNON.NaiveBroadphase();
 

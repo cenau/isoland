@@ -80,7 +80,7 @@ void main() {
   color = vec3(snoise3(vNormal * 0.2)); 
   
   vec3 grass = vec3(.3,.7,.3) * abs(color);
-  color = mix(grass,rock,smoothstep(0.,1.,vNorm.y));  
+  color = mix(grass,rock,smoothstep(0.,0.4,vNorm.y));  
 float fogDistance = gl_FragCoord.z / gl_FragCoord.w;
   float fogAmount = fog_exp2(fogDistance, FOG_DENSITY);
   vec4 fogColor = vec4(1.,0.86,0.86,1.); // white 
