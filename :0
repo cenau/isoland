@@ -1,0 +1,659 @@
+import * as THREE from 'three';
+import createLoop from 'canvas-loop';
+import kd from 'keydrown';
+import ecs from 'tiny-ecs';
+import ec from 'three-effectcomposer';
+import CANNON from 'cannon';
+import isosurface from 'isosurface';
+import SimplexNoise from 'simplex-noise'
+import EventEmitter from 'events';
+
+// systems
+import initPhysics from './initPhysics';
+import initGraphics from './initGraphics';
+import stickToTargetSystem from './stickToTargetSystem';
+
+// components
+import Physics from './Physics';
+import WASD from './WASD';
+import Graphics from './Graphics';
+import StickToTarget from './StickToTarget';
+import Position from './Position';
+import Quaternion from './Quaternion';
+import Iso from './iso';
+import webworkify from 'webworkify';
+
+const scale = 10
+
+class ChunkManager extends EventEmitter {
+    constructor() {
+        super();
+}
+ 
+  addChunkToWorld(geom,gridpos){
+    
+    assignUVs(geom);
+    geom.scale(scale,scale,scale);
+    let obj = new THREE.Mesh(geom);
+    obj.material.side = THREE.DoubleSide;
+    obj.material = passMat
+    obj.material.extensions.derivatives = true
+    scene.add(obj);
+    obj.position.set(gridpos.x * adjust * 2 * scale ,gridpos.y * adjust * 2 * scale ,gridpos.z * adjust * 2 * scale);
+
+  }
+
+  makeChunk(i,j,k){
+        const c = new chunk(new THREE.Vector3(i,j,k));
+//        scene.add(c.obj);
+  //      c.obj.position.set(i * adjust * 2 * scale ,j * adjust * 2 * scale ,k * adjust * 2 * scale);
+        this.chunk(new THREE.Vector3(i,j,k))
+
+  }
+    
+  makeChunks() {
+        this.gridsize = new THREE.Vector3(3,1,3);
+        this.chunkLength  = this.gridsize.x * this.gridsize.y * this.gridsize.z; 
+    
+        this.normalisedGrid = new THREE.Vector3(
+    (this.gridsize.x - 1) /2,
+    this.gridsize.y,
+    (this.gridsize.x -1) /2 
+  );
+
+  for (let i = -this.normalisedGrid.x;i<=this.normalisedGrid.x; i++){
+    for (let j = 0;j<this.normalisedGrid.y; j++){
+      for (let k = -this.normalisedGrid.z;k<=this.normalisedGrid.z; k++){
+        this.makeChunk(i,j,k);
+      }
+    }
+   }
+
+
+
+
+   }
+  chunk(chunk) {
+    this.emit('chunk',chunk);
+  }
+}
+
+const chunkManager = new ChunkManager();
+//  stuff that should be imports but doesnt work
+const EffectComposer = ec(THREE);
+// import { glslify } from 'glslify'
+const glslify = require('glslify');
+// needed for bug https://github.com/stackgl/glslify/issues/49 - if you try using fixes like glslify babel plugin, then shaders wont live reload!!
+
+const simplex = new SimplexNoise();
+
+const adjust = 1.935;
+//const adjust = 1.876;
+
+var worker = webworkify(Iso);
+
+function doInWorker(gridposadjust,gridpos) {
+  function handleWorkerCompletion(message) {
+    if (message.data.command == "done") {
+      worker.removeEventListener("message", handleWorkerCompletion);
+    console.log(message.data.geom);
+  let geom = message.data.geom
+    chunkManager.addChunkToWorld(geom,gridpos);  
+    }
+  }
+
+  worker.addEventListener("message", handleWorkerCompletion, false);
+  
+  let msg = {
+    "gridposadjust": gridposadjust,
+  }
+  worker.postMessage(msg);
+}
+document.addEventListener("DOMContentLoaded", function(event) 
+{
+
+})
+
+
+
+
+//from https://stackoverflow.com/questions/20774648/three-js-generate-uv-coordinate
+function assignUVs2(geometry) {
+
+    geometry.faceVertexUvs[0] = [];
+
+    geometry.faces.forEach(function(face) {
+
+        var uvs = [];
+        var ids = [ 'a', 'b', 'c'];
+        for( var i = 0; i < ids.length; i++ ) {
+            var vertex = geometry.vertices[ face[ ids[ i ] ] ].clone();
+
+            var n = vertex.normalize();
+            var yaw = .5 - Math.atan( n.z, - n.x ) / ( 2.0 * Math.PI );
+            var pitch = .5 - Math.asin( n.y ) / Math.PI;
+
+            var u = yaw,
+                v = pitch;
+            uvs.push( new THREE.Vector2( u, v ) );
+        }
+        geometry.faceVertexUvs[ 0 ].push( uvs );
+    });
+
+    geometry.uvsNeedUpdate = true;
+}
+
+
+
+function assignUVs(geometry) {
+
+    geometry.faceVertexUvs[0] = [];
+
+    geometry.faces.forEach(function(face) {
+
+        var components = ['x', 'y', 'z'].sort(function(a, b) {
+            return Math.abs(face.normal[a]) > Math.abs(face.normal[b]);
+        });
+
+        var v1 = geometry.vertices[face.a];
+        var v2 = geometry.vertices[face.b];
+        var v3 = geometry.vertices[face.c];
+
+        geometry.faceVertexUvs[0].push([
+            new THREE.Vector2(v1[components[0]], v1[components[1]]),
+            new THREE.Vector2(v2[components[0]], v2[components[1]]),
+            new THREE.Vector2(v3[components[0]], v3[components[1]])
+        ]);
+
+    });
+
+    geometry.uvsNeedUpdate = true;
+}
+
+
+
+// assets
+
+const scene = setupScene();
+
+function flatFloor(vector){
+  return vector.y;
+}
+
+function between(v,p,d){
+  let isBetween = (v < p + d && v > p - d)
+  return isBetween
+}
+
+function betweenVec(v,p,d){
+  
+  let isBetween = (between(v.x,p.x,d.x) && between(v.y,p.y,d.y) && between(v.z,p.z,d.z));
+  return isBetween
+
+}
+
+function wall(vector,position,dimension){
+  let object = 0;
+  if (betweenVec(vector,position,dimension)){
+    object  = simplex.noise3D(vector.x,vector.y,vector.z);
+  }
+  return object
+}
+
+function sdBox( p, b ,s)
+{
+  let d = {}
+  d.x = Math.abs(p.x / s) - b.x;
+  d.y = Math.abs(p.y / s) - b.y;
+  d.z = Math.abs(p.z / s) - b.z;
+  return (Math.min(Math.max(d.x,Math.max(d.y,d.z)),0.0) + Math.max(d.x,0.0) + Math.max(d.y,0.0) + Math.max(d.z,0.0)) * s;
+}
+
+
+function sphere(vector){
+  let object  = Math.sqrt(vector.x * vector.x + vector.y * vector.y - vector.z * vector.z) - 1;
+  return object
+}
+
+function bendyWall(vector, axis, frequency, amp, dims,inf){
+  let anglevec = vector.clone();
+  anglevec.applyAxisAngle(axis, Math.sin(frequency * vector.z) * amp);
+  if (inf){anglevec.z = 1} 
+  let density = sdBox(new THREE.Vector3(anglevec.x,anglevec.y,anglevec.z), dims,1);
+  return density
+}
+
+function surroundingWall(vector) {
+  let object = sdBox(vector, new THREE.Vector3(5,1.5,5),1)
+  object = Math.max(object, -sdBox(vector, new THREE.Vector3(4,1.6,4),1))
+  return object;
+}
+
+function gate(vector) {
+  let object = sdBox(vector, new THREE.Vector3(1,1.3,1.1),1)
+  return object;
+
+}
+
+function building(vector) {
+  let object = sdBox(vector, new THREE.Vector3(2,5,2),1)
+  return object;
+}
+
+function buildingTower(vector) {
+  let object = sdBox(vector, new THREE.Vector3(1,3,1),1)
+  return object;
+}
+
+function densityGenerator(vector){
+  let density = flatFloor(vector);
+  let wall = surroundingWall(vector); 
+  wall = Math.max(wall,-gate(new THREE.Vector3(vector.x,vector.y,vector.z-5)));
+  let keep = building(vector); 
+  //keep = Math.min(keep,buildingTower(vector));
+  density = Math.min(density, wall);
+  density = Math.min(density, keep);
+  //density = Math.min(density,bendyWall(new THREE.Vector3(vector.x,vector.y,vector.z),new THREE.Vector3(0,0.1,0) , 1.5 , 1. ,new THREE.Vector3(0.2,1.2,1),true));
+ // density = Math.min(density,bendyWall(new THREE.Vector3(vector.x,vector.y,vector.z),new THREE.Vector3(0,0.4,0) , 0.2 , 1. ,new THREE.Vector3(0.2,0.8,1),true));
+  //density = Math.min(density,bendyWall(new THREE.Vector3(vector.x + 1,vector.y,vector.z),new THREE.Vector3(0,0.4,0) , 0.2 , 1. ,new THREE.Vector3(0.2,0.8,1),true));
+   //density = Math.min(density,bendyWall(new THREE.Vector3(vector.x+2,vector.y,vector.z),new THREE.Vector3(0,0.2,0) , 1.5 , 1. ,new THREE.Vector3(0.2,0.3,1),true));
+  //let ruin = bendyWall(new THREE.Vector3(vector.x+4,vector.y,vector.z),new THREE.Vector3(vector.x,vector.y+1,vector.z) , 0.1 , 1. ,new THREE.Vector3(1,1,2),true);
+  //ruin = Math.max(ruin, -sdBox(new THREE.Vector3(vector.x + 4,vector.y,vector.z), new THREE.Vector3(0.8,2.0,0.8),1));
+  //ruin = Math.max(ruin, -sdBox(new THREE.Vector3(vector.x + 3.5,vector.y,vector.z), new THREE.Vector3(1.0,0.5,0.2),1));
+  //density = Math.min(density,ruin);
+  //density = bendyWall(new THREE.Vector3(vector.x,vector.y,vector.z), 0.5 , 1. ,new THREE.Vector3(0.2,0.8,1),true);
+  //density -= wall(vector, new THREE.Vector3(1,1,1),new THREE.Vector3(1,1,6));
+  // if (vector.x > Math.abs(Math.cos(vector.z)) && vector.x < Math.abs(Math.cos(vector.z)) + 0.2 && vector.y < 1.){
+   // density -= pillar(vector) * Math.abs(Math.sin(vector.z * 0.5) * 3 )
+ // };
+ 
+  
+  
+
+  if (density >0)  {density +=  simplex.noise3D(vector.x,vector.y,vector.z) * 0.1}; 
+  if (density <=0)  {density +=  simplex.noise3D(vector.x,vector.y,vector.z) * 0.1}; 
+  return density;
+}
+
+
+
+var oldMap = function(p) {
+  //return  simplex.noise3D(p.x,p.y,p.z);
+ // return Math.sqrt(p.x * p.x + p.y * p.y + p.z * p.z) - 1;
+ // return Math.sqrt(p.x * p.x + p.y * p.y   - simplex.noise3D(p.x,p.y,p.z)) - 1; //tunnel
+  //return Math.sqrt(p.y * 4  -  simplex.noise3D(p.x,p.y,p.z)) - 1; //landscape
+  //return p.x * p.x + p.y * p.y   - simplex.noise3D(p.x,p.y,p.z) ; //structure
+  let adj = 0.
+ // if (p.x > -0.2 && p.x <0.2) {adj = -Math.abs(simplex.noise3D(p.x,p.y,p.z))} //wall
+  //if (p.x > -0.4 && p.x <0.4 && p.z >-0.4 && p.z < 0.4) {adj = -Math.abs(simplex.noise3D(p.x,p.y,p.z))}
+ // adj = adj * 8; 
+  //if (p.x > -0.2 && p.x <0.2) {adj += -Math.abs(simplex.noise3D(p.x,p.y,p.z))} //wall
+  
+  if (p.x > -1.4 && p.x <-1.0) {adj += -Math.abs(simplex.noise3D(p.x,p.y,p.z + gridpos * 1.18))} //wall
+  if (p.x > 0.8 && p.x <1.2) {adj += -Math.abs(simplex.noise3D(p.x,p.y,p.z + gridpos * 1.18)) + p.y} //wall
+  
+  if (gridpos ==4){
+   if (p.z < -0.5) {adj += -Math.abs(simplex.noise3D(p.x,p.y,p.z + gridpos * 1.18)) * 3  }
+   if (p.x > -0.2 && p.x < 0.2) { adj = -0. }
+  }
+  return p.y + adj * Math.abs(p.z + Math.sin(gridpos * 120) * 6 ) - simplex.noise3D(p.x,p.y,p.z) *0.1 ; //wall with hole
+  //return p.y + adj * 6. - simplex.noise3D(p.x,p.y,p.z) *0.1 ; //structure
+};
+
+
+
+
+
+
+
+function chunk(gridpos){
+  this.d = 8;
+  this.dims = [this.d, this.d, this.d];
+  this.b = 2;
+  this.bounds = [[-this.b, -this.b, -this.b ], [this.b, this.b, this.b]];
+  this.gridpos = gridpos;
+  this.gridposadjust = new THREE.Vector3(gridpos.x,gridpos.y,gridpos.z);
+  this.gridposadjust.multiply(new THREE.Vector3(adjust * 2, adjust * 2,adjust * 2));
+  const self = this; //nasty
+  this.map = function(p) {
+    return densityGenerator(p.add(self.gridposadjust));
+  }
+  this.makeObj();
+}
+
+
+chunk.prototype.makeObj = function(){
+  //doInWorker(this.gridposadjust,this.gridpos);
+//  assignUVs(geom);
+//  geom.scale(scale,scale,scale);
+ // this.obj = new THREE.Mesh(geom);
+ // this.obj.material.side = THREE.DoubleSide;
+//  this.obj.material = passMat
+//  this.obj.material.extensions.derivatives = true
+}
+
+
+// physics
+
+const world = setupWorld();
+
+
+  const body = new CANNON.Body({
+    mass: 0,
+     position: new CANNON.Vec3(0, 0, 0), // m 
+    shape: new CANNON.Plane(100),
+  });
+
+  var rot = new CANNON.Vec3(1,0,0)
+  body.quaternion.setFromAxisAngle(rot, -Math.PI/2)
+  world.addBody(body);
+
+
+//  canvas for rendering
+const canvas = document.createElement('canvas');
+document.body.appendChild(canvas);
+canvas.style.zIndex = -1;
+// renderer
+
+const renderer = setupRenderer();
+const camera = setupCamera();
+const composer = setupComposer();
+
+// setup ecs
+const ents = new ecs.EntityManager(); // ents, because, i keep misspelling entities
+
+// the player
+const player = ents.createEntity();
+
+player.addComponent(Position);
+player.addComponent(Quaternion);
+player.addComponent(Physics);
+player.addComponent(Graphics);
+player.addComponent(WASD);
+
+player.position.y = 4;
+player.position.z = 10;
+
+var test = new THREE.Sphere(10,10);
+var tesobj = new THREE.Mesh(test)
+scene.add(tesobj)
+
+
+// procedural deformation texture
+const deformMat = new THREE.ShaderMaterial({
+  vertexShader: glslify('../shaders/deform_vert.glsl'),
+  fragmentShader: glslify('../shaders/deform_frag.glsl'),
+  transparent: true,
+  uniforms: {
+    iGlobalTime: { type: 'f', value: 0 },
+    iResolution: { type: 'v2', value: new THREE.Vector2() },
+  },
+  defines: {
+    USE_MAP: '',
+  },
+});
+
+
+
+  chunkManager.on('chunk', function listener1 (e) {
+    console.info('listener1', e);
+var progress = document.createElement("div")
+progress.style.color="black"
+progress.style.background="green"
+document.body.append(progress);
+    progress.innerHTML = e;
+  });
+
+  chunkManager.makeChunks();
+
+
+
+const passMat = new THREE.ShaderMaterial({
+  vertexShader: glslify('../shaders/rock_vert.glsl'),
+  fragmentShader: glslify('../shaders/rock_frag.glsl'),
+  uniforms: {
+    iGlobalTime: { type: 'f', value: 0 },
+    iResolution: { type: 'v2', value: new THREE.Vector2() },
+  },
+  defines: {
+    USE_MAP: '',
+  },
+});
+const app = createLoop(canvas, { scale: renderer.devicePixelRatio });
+
+
+// uniforms for screen shaders
+composer.passthroughEffect.uniforms.iResolution.value.set(app.shape[0], app.shape[1]);
+
+// time - for passing into shaders
+let time = 0;
+
+// the terrain plane
+const geom = new THREE.PlaneGeometry(
+  300, 300, // Width and Height
+  300, 300, // Terrain resolution
+);
+
+
+const plane = ents.createEntity();
+plane.addComponent(Graphics);
+plane.addComponent(Position);
+plane.addComponent(StickToTarget);
+plane.graphics.mesh = new THREE.Mesh(geom);
+
+plane.graphics.mesh.material = deformMat;
+plane.graphics.mesh.material.side = THREE.DoubleSide;
+plane.graphics.mesh.rotation.x -= (90 * Math.PI) / 180;
+plane.stickToTarget.target = player;
+
+plane.remove()
+
+
+
+//obj.material = deformMat;
+app.on('tick', (dt) => {
+  kd.tick();
+  time += dt / 1000;
+  deformMat.uniforms.iGlobalTime.value = time;
+  composer.render(scene, camera);
+  renderer.render(scene, camera, composer.bufferTexture);
+  composer.passthroughEffect.uniforms.iGlobalTime.value = time;
+
+
+  world.step(world.fixedTimeStep, dt, world.maxSubSteps);
+
+  // run system inits
+  ents.queryComponents([Graphics]).forEach((each) => {
+    if (!each.graphics.inScene) {
+      initGraphics(scene, each);
+    }
+  });
+  ents.queryComponents([Physics]).forEach((each) => {
+    if (!each.physics.body) {
+      initPhysics(world, each);
+    }
+  });
+  // run systems
+
+  // update position from physics
+  ents.queryComponents([Physics, Position]).forEach((each) => {
+    each.position.copy(each.physics.body.position);
+  });
+  // update quaternion from physics
+  ents.queryComponents([Physics, Quaternion]).forEach((each) => {
+    each.quaternion.copy(each.physics.body.quaternion);
+  });
+
+
+  // update mesh from position
+  ents.queryComponents([Graphics, Position]).forEach((each) => {
+    each.graphics.mesh.position.copy(each.position);
+  });
+  // update mesh from quaternion
+  ents.queryComponents([Graphics, Quaternion]).forEach((each) => {
+    each.graphics.mesh.quaternion.copy(each.quaternion);
+  });
+
+  ents.queryComponents([Position, StickToTarget]).forEach((each) => {
+    stickToTargetSystem(each);
+  });
+
+  camera.position.copy(player.position);
+  camera.quaternion.copy(player.quaternion);
+});
+
+
+app.on('resize', resize);
+
+
+
+// keyboard input
+
+
+
+
+kd.W.down(() => {
+  ents.queryComponents([WASD]).forEach((each) => {
+    each.physics.body.applyLocalImpulse(
+      new CANNON.Vec3(0, 0, -1),
+      new CANNON.Vec3(0, 0, 0),
+    );
+  });
+});
+
+kd.S.down(() => {
+  ents.queryComponents([WASD]).forEach((each) => {
+    each.physics.body.applyLocalImpulse(
+      new CANNON.Vec3(0, 0, 1),
+      new CANNON.Vec3(0, 0, 0),
+    );
+  });
+});
+
+kd.A.down(() => {
+  ents.queryComponents([WASD]).forEach((each) => {
+    each.physics.body.applyLocalImpulse(
+      new CANNON.Vec3(-0.1, 0, 0),
+      new CANNON.Vec3(0, 0, -0.1),
+    );
+  });
+});
+
+kd.D.down(() => {
+  ents.queryComponents([WASD]).forEach((each) => {
+    each.physics.body.applyLocalImpulse(
+      new CANNON.Vec3(0.1, 0, 0),
+      new CANNON.Vec3(0, 0, -0.1),
+    );
+  });
+});
+
+
+function setupRenderer() {
+  const rend = new THREE.WebGLRenderer({
+    canvas,
+    antialias: true,
+    devicePixelRatio: window.devicePixelRatio,
+  });
+
+  rend.setClearColor(0xffdddd, 1);
+  // renderer.context.getShaderInfoLog = function () { return '' }; //nasty hack to suppress error merssages due to possible ff bug? https://github.com/mrdoob/three.js/issues/9716
+  return rend;
+}
+
+
+// setup camera
+function setupCamera() {
+  const cam = new THREE.PerspectiveCamera(
+    75,
+    window.innerWidth / window.innerHeight,
+    0.1,
+    500);
+
+  cam.position.set(0, 0, 0);
+  return cam;
+}
+
+function setupWorld() {
+  const wor = new CANNON.World();
+  // wor.gravity = new CANNON.Vec3(0, -0.1, 0) // m/s²
+  //wor.gravity = new CANNON.Vec3(0, 0, 0); // m/s²
+
+  wor.broadphase = new CANNON.NaiveBroadphase();
+
+  wor.solver.iterations = 10;
+
+
+  wor.fixedTimeStep = 1 / 60; // physics engine setting - keeps render framerate and sim in sync
+  wor.maxSubSteps = 10; // physics engine setting - not 100% sure what this does
+
+  return wor;
+}
+
+function setupScene() {
+  const sce = new THREE.Scene();
+  const light = new THREE.AmbientLight(0x404040); // soft white light
+  sce.add(light);
+  return sce;
+}
+
+function setupComposer() {
+  const effectComposer = new EffectComposer(renderer);
+
+  // setup buffer render target for render to texture stuff.
+
+  // const bufferScene = new THREE.Scene();
+  effectComposer.bufferTexture = new THREE.WebGLRenderTarget(
+    window.innerWidth,
+    window.innerHeight,
+    {
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.NearestFilter,
+    },
+  );
+
+
+  // passthrough shader for fullscreen + buffer. Use this as template for effects.
+  const passthroughShader = {
+
+    uniforms: {
+      tLast: { type: 't', value: effectComposer.bufferTexture },
+      tDiffuse: { type: 't', value: null }, // output from previous - all need this
+      iResolution: { type: 'v2', value: new THREE.Vector2() },
+      iGlobalTime: { type: 'f', value: 0 },
+    },
+    vertexShader: glslify('../shaders/pass_vert.glsl'),
+    fragmentShader: glslify('../shaders/pass_frag.glsl'),
+
+  };
+
+  // effect composer to deal with the screen shaders
+  effectComposer.addPass(new EffectComposer.RenderPass(scene, camera)); // the actual scene
+  effectComposer.passthroughEffect = new EffectComposer.ShaderPass(passthroughShader);
+
+  effectComposer.addPass(effectComposer.passthroughEffect); // adding the passthrough shader
+
+  effectComposer.passes[effectComposer.passes.length - 1].renderToScreen = true;
+
+  return effectComposer;
+}
+
+
+app.start()
+resize()
+
+
+
+function resize() {
+  const [width, height] = app.shape;
+  camera.aspect = width / height;
+  renderer.setSize(width, height, false);
+
+  camera.updateProjectionMatrix();
+}
+
+
+
+
+
+

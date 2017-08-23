@@ -13,11 +13,10 @@ uniform float iGlobalTime;
 uniform float logDepthBufFC;
 varying float vFragDepth;
 varying vec3 vViewPos;
-uniform sampler2D normalMap;
+varying vec3 vWorldPos;
 
  
 #pragma glslify: snoise3 = require(glsl-noise/simplex/3d) 
-#pragma glslify: perturb = require('glsl-perturb-normal')
 #pragma glslify: fog_exp = require(glsl-fog/exp) 
 #pragma glslify: fog_exp2 = require(glsl-fog/exp2) 
 vec3 random2( vec3 p ) {
@@ -25,11 +24,6 @@ vec3 random2( vec3 p ) {
 }
 
 void main() {
-  vec3 normalRGB = texture2D(normalMap, vUv).rgb;
-  vec3 normalMap = normalRGB * 2.0 - 1.0;
-  vec3 N = normalize(vNormal);
-  vec3 V = normalize(vViewPos);
-  vec3 normal = perturb(normalMap, N, V, vUv);
 
     vec3 st = vNorm; 
     // Scale 
@@ -80,7 +74,7 @@ void main() {
   color = vec3(snoise3(vNormal * 0.2)); 
   
   vec3 grass = vec3(.3,.7,.3) * abs(color);
-  color = mix(grass,rock,smoothstep(0.,0.4,vNorm.y));  
+  color = mix(grass,rock,smoothstep(0.,0.4,vWorldPos.y));  
 float fogDistance = gl_FragCoord.z / gl_FragCoord.w;
   float fogAmount = fog_exp2(fogDistance, FOG_DENSITY);
   vec4 fogColor = vec4(1.,0.86,0.86,1.); // white 
