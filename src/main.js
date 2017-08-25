@@ -5,12 +5,10 @@ import ecs from 'tiny-ecs';
 import ec from 'three-effectcomposer';
 import CANNON from 'cannon';
 import isosurface from 'isosurface';
-import SimplexNoise from 'simplex-noise'
 import EventEmitter from 'events';
 import PointerLockControls from 'three-pointerlock';
-import QuickHull from  "./QuickHull"
-import ConvexGeometry from  "./ConvexGeometry"
-
+import QWorker from './DensityQWorker';
+import webworkify from 'webworkify';
 
 // systems
 import initPhysics from './initPhysics';
@@ -24,20 +22,14 @@ import Graphics from './Graphics';
 import StickToTarget from './StickToTarget';
 import Position from './Position';
 import Quaternion from './Quaternion';
-import Iso from './iso';
-import QWorker from './my_task';
-import webworkify from 'webworkify';
 
 
 //  stuff that should be imports but doesnt work
 const EffectComposer = ec(THREE);
-QuickHull(THREE);
-ConvexGeometry(THREE);
 // import { glslify } from 'glslify'
 const glslify = require('glslify');
 // needed for bug https://github.com/stackgl/glslify/issues/49 - if you try using fixes like glslify babel plugin, then shaders wont live reload!!
 
-const simplex = new SimplexNoise();
 
 const scale = 50
 //const adjust = 1.935; //32 @ 10
@@ -154,66 +146,7 @@ plane.stickToTarget.target = player;
 
 plane.remove()
 
-var worker = webworkify(Iso);
-var dones = []
 
-
-
-function OlddoInWorker(gridposadjust,gridpos,caller) {
-  function handleWorkerCompletion(message) {
-    if (message.data.command == "done") {
-  let geom = message.data.geom
-  let gridp = message.data.gridpos
-      if (message.data.id in dones){
-      } else {
-        caller.addChunkToWorld(geom,gridp);
-        dones.push(message.data.id)
-      for (var ps in message.data.result.positions){
-        if ( message.data.result.positions[ps][1] > 0.2){
-        const physicsSphere = ents.createEntity();
-        physicsSphere.addComponent(Position);
-        physicsSphere.addComponent(Physics);
-        physicsSphere.position.x = gridp.x * adjust * 2 * scale + message.data.result.positions[ps][0] * scale;
-        physicsSphere.position.y =  gridp.y * adjust * 2 * scale + message.data.result.positions[ps][1] * scale;
-        physicsSphere.position.z = gridp.z * adjust * 2 * scale +message.data.result.positions[ps][2] * scale ;
-        physicsSphere.addComponent(Quaternion);
-        physicsSphere.addComponent(Graphics);
-        physicsSphere.addComponent(Physics);
-        physicsSphere.physics.mass = 0;
-   let geom = new THREE.SphereGeometry(
-    0.5, 10, 10, 10,
-  );
-  physicsSphere.graphics.mesh = new THREE.Mesh(geom)
-        }
-  } 
-   let points = [];
-        for (var ps in message.data.result.positions){ 
-           points.push(
-             new THREE.Vector3(
-             message.data.result.positions[ps][0] * scale + gridp.x * adjust * 2 * scale,
-             message.data.result.positions[ps][1] * scale + gridp.y * adjust * 2 * scale,
-             message.data.result.positions[ps][2] * scale + gridp.z * adjust * 2 * scale
-             )
-           
-           )
-        }
-      }
-      //if(workQ.length > 0){
-    //  let task = workQ.shift()
-    //  doInWorker(task.a,task.g)
-    //}
-    }
-    }
-  
-
-  worker.addEventListener("message", handleWorkerCompletion, false);
-  
-  let msg = {
-    "gridposadjust": gridposadjust,
-    "gridpos": gridpos,
-  }
-  worker.postMessage(msg);
-}
 document.addEventListener("DOMContentLoaded", function(event) 
 {
 
@@ -272,8 +205,8 @@ function QueryableWorker(webworkermodule, defaultListener, onError) {
     }
 var servitor = new QueryableWorker(QWorker)
 
- servitor.addListener('isoDone', function (ga, g) {
-      console.log(ga,g);
+ servitor.addListener('isoDone', function (geom, gridpos) {
+      addChunkToWorld(geom,gridpos);
     });
 //from https://stackoverflow.com/questions/20774648/three-js-generate-uv-coordinate
 function assignUVs2(geometry) {
@@ -335,7 +268,7 @@ const wireMat = new THREE.MeshBasicMaterial({
 });
 
 const chunks = []
-chunk.prototype.addChunkToWorld = function(g,gridpos){
+function addChunkToWorld(g,gridpos){
   var loader = new THREE.JSONLoader();
      let geom = loader.parse( g ).geometry
     geom.__proto__ = THREE.IsosurfaceGeometry.prototype;
@@ -396,7 +329,7 @@ function chunk(gridpos){
 
 
 chunk.prototype.makeObj = function(){
-  servitor.sendQuery('getIso',this.gridposadjust,this.gridpos,this.dims,this.bounds) 
+  servitor.sendQuery('getIso',this.gridposadjust,this.gridpos,this.dims,this.bounds,this) 
 }
 
 

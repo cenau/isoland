@@ -1,3 +1,4 @@
+// queryable web worker stuff based on https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Using_web_workers
 import SimplexNoise from 'simplex-noise'
 import * as THREE from 'three';
 import isosurface from 'isosurface';
@@ -5,7 +6,7 @@ export default function (self) {
 const simplex = new SimplexNoise();//TODO check this is only called once as its expensive
 
 var queryableFunctions = {
-  getIso: function(gridposadjust,gridpos,d,b) {  
+  getIso: function(gridposadjust,gridpos,d,b,caller) {  
   const dims = [d, d, d];
   const bounds = [[-b, -b, -b ], [b, b, b]];
   const map = function(p) {
@@ -13,7 +14,7 @@ var queryableFunctions = {
   }
   const geom = new THREE.IsosurfaceGeometry(dims, map, bounds);
     
-    reply('isoDone', geom.toJSON(),gridpos);
+    reply('isoDone', geom.toJSON(),gridpos,caller);
   },
   ping: function() {
       reply('pong'); 
