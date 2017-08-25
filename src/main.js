@@ -7,6 +7,10 @@ import CANNON from 'cannon';
 import isosurface from 'isosurface';
 import SimplexNoise from 'simplex-noise'
 import EventEmitter from 'events';
+import PointerLockControls from 'three-pointerlock';
+import QuickHull from  "./QuickHull"
+import ConvexGeometry from  "./ConvexGeometry"
+
 
 // systems
 import initPhysics from './initPhysics';
@@ -21,20 +25,25 @@ import StickToTarget from './StickToTarget';
 import Position from './Position';
 import Quaternion from './Quaternion';
 import Iso from './iso';
+import QWorker from './my_task';
 import webworkify from 'webworkify';
 
 
 //  stuff that should be imports but doesnt work
 const EffectComposer = ec(THREE);
+QuickHull(THREE);
+ConvexGeometry(THREE);
 // import { glslify } from 'glslify'
 const glslify = require('glslify');
 // needed for bug https://github.com/stackgl/glslify/issues/49 - if you try using fixes like glslify babel plugin, then shaders wont live reload!!
 
 const simplex = new SimplexNoise();
 
-const scale = 10
-const adjust = 1.935;
-//const adjust = 1.876;
+const scale = 50
+//const adjust = 1.935; //32 @ 10
+//const adjust = 1.876;  //32 
+const adjust = 1.876;  //24 
+//const adjust = 1.750; // 8 @ 10
 
 //assets
 
@@ -76,10 +85,9 @@ player.addComponent(Position);
 player.addComponent(Quaternion);
 player.addComponent(Physics);
 player.addComponent(Graphics);
-player.addComponent(WASD);
+//player.addComponent(WASD);
 
 player.position.y = 4;
-player.position.z = 10;
 
 
 
@@ -114,6 +122,9 @@ const passMat = new THREE.ShaderMaterial({
     USE_MAP: '',
   },
 });
+
+
+    passMat.extensions.derivatives = true
 const app = createLoop(canvas, { scale: renderer.devicePixelRatio });
 
 
@@ -144,30 +155,57 @@ plane.stickToTarget.target = player;
 plane.remove()
 
 var worker = webworkify(Iso);
-var workQ = []
 var dones = []
-function doInWorker(gridposadjust,gridpos) {
+
+
+
+function OlddoInWorker(gridposadjust,gridpos,caller) {
   function handleWorkerCompletion(message) {
     if (message.data.command == "done") {
   let geom = message.data.geom
-      console.log(message.data)
   let gridp = message.data.gridpos
-      console.log(gridp)
       if (message.data.id in dones){
-        console.log("got already")
       } else {
-        addChunkToWorld(geom,gridp);
+        caller.addChunkToWorld(geom,gridp);
         dones.push(message.data.id)
+      for (var ps in message.data.result.positions){
+        if ( message.data.result.positions[ps][1] > 0.2){
+        const physicsSphere = ents.createEntity();
+        physicsSphere.addComponent(Position);
+        physicsSphere.addComponent(Physics);
+        physicsSphere.position.x = gridp.x * adjust * 2 * scale + message.data.result.positions[ps][0] * scale;
+        physicsSphere.position.y =  gridp.y * adjust * 2 * scale + message.data.result.positions[ps][1] * scale;
+        physicsSphere.position.z = gridp.z * adjust * 2 * scale +message.data.result.positions[ps][2] * scale ;
+        physicsSphere.addComponent(Quaternion);
+        physicsSphere.addComponent(Graphics);
+        physicsSphere.addComponent(Physics);
+        physicsSphere.physics.mass = 0;
+   let geom = new THREE.SphereGeometry(
+    0.5, 10, 10, 10,
+  );
+  physicsSphere.graphics.mesh = new THREE.Mesh(geom)
+        }
+  } 
+   let points = [];
+        for (var ps in message.data.result.positions){ 
+           points.push(
+             new THREE.Vector3(
+             message.data.result.positions[ps][0] * scale + gridp.x * adjust * 2 * scale,
+             message.data.result.positions[ps][1] * scale + gridp.y * adjust * 2 * scale,
+             message.data.result.positions[ps][2] * scale + gridp.z * adjust * 2 * scale
+             )
+           
+           )
+        }
       }
-    //if(workQ.length > 0){
+      //if(workQ.length > 0){
     //  let task = workQ.shift()
     //  doInWorker(task.a,task.g)
     //}
-
     }
-  }
+    }
+  
 
-  console.log(gridposadjust,gridpos)
   worker.addEventListener("message", handleWorkerCompletion, false);
   
   let msg = {
@@ -181,9 +219,62 @@ document.addEventListener("DOMContentLoaded", function(event)
 
 })
 
+//from https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Using_web_workers
+function QueryableWorker(webworkermodule, defaultListener, onError) {
+      var instance = this,
+      worker = webworkify(webworkermodule),
+      listeners = {};
 
+      this.defaultListener = defaultListener || function() {};
+ 
+      if (onError) {worker.onerror = onError;}
 
+      this.postMessage = function(message) {
+        worker.postMessage(message);
+      }
 
+      this.terminate = function() {
+        worker.terminate();
+      }
+
+      this.addListener = function(name, listener) {
+        listeners[name] = listener; 
+      }
+ 
+      this.removeListener = function(name) { 
+        delete listeners[name];
+      }
+
+      /* 
+        This functions takes at least one argument, the method name we want to query.
+        Then we can pass in the arguments that the method needs.
+      */
+      this.sendQuery = function() {
+        if (arguments.length < 1) {
+          throw new TypeError('QueryableWorker.sendQuery takes at least one argument'); 
+          return;
+        }
+        worker.postMessage({
+          'queryMethod': arguments[0],
+          'queryMethodArguments': Array.prototype.slice.call(arguments, 1)
+        });
+      }
+
+      worker.onmessage = function(event) {
+        if (event.data instanceof Object &&
+          event.data.hasOwnProperty('queryMethodListener') &&
+          event.data.hasOwnProperty('queryMethodArguments')) {
+          listeners[event.data.queryMethodListener].apply(instance, event.data.queryMethodArguments);
+        } else {
+          this.defaultListener.call(instance, event.data);
+        }
+      }
+    }
+var servitor = new QueryableWorker(QWorker)
+
+ servitor.addListener('isoDone', function (ga, g) {
+      console.log(ga,g);
+    });
 //from https://stackoverflow.com/questions/20774648/three-js-generate-uv-coordinate
 function assignUVs2(geometry) {
 
@@ -238,21 +329,32 @@ function assignUVs(geometry) {
 }
 
 
- 
-function  addChunkToWorld(g,gridpos){
+const wireMat = new THREE.MeshBasicMaterial({
+    color: 0xff0000,
+    wireframe: true
+});
+
+const chunks = []
+chunk.prototype.addChunkToWorld = function(g,gridpos){
   var loader = new THREE.JSONLoader();
      let geom = loader.parse( g ).geometry
     geom.__proto__ = THREE.IsosurfaceGeometry.prototype;
-    console.log(geom.uuid, "got", gridpos)
     assignUVs(geom);
     geom.scale(scale,scale,scale);
+   
+
+
+
+     
+  
+
     let obj = new THREE.Mesh(geom);
     obj.material.side = THREE.DoubleSide;
     obj.material = passMat
-    obj.material.extensions.derivatives = true
+    obj.material = wireMat
     scene.add(obj);
     obj.position.set(gridpos.x * adjust * 2 * scale ,gridpos.y * adjust * 2 * scale ,gridpos.z * adjust * 2 * scale);
-
+    chunks.push(obj)
   }
 
 function  makeChunk(i,j,k){
@@ -260,10 +362,9 @@ function  makeChunk(i,j,k){
 //        scene.add(c.obj);
   //      c.obj.position.set(i * adjust * 2 * scale ,j * adjust * 2 * scale ,k * adjust * 2 * scale);
 
-  }
-    
+  }    
 function  makeChunks() {
-        const gridsize = new THREE.Vector3(6,2,6);
+        const gridsize = new THREE.Vector3(3,3,3);
         const chunkLength  = gridsize.x * gridsize.y * gridsize.z; 
     
         let normalisedGrid = new THREE.Vector3(
@@ -285,28 +386,97 @@ function  makeChunks() {
 
 function chunk(gridpos){
   this.gridpos = gridpos;
+  this.dims = 24;
+  this.bounds = 2;
   this.gridposadjust = new THREE.Vector3(gridpos.x,gridpos.y,gridpos.z);
   this.gridposadjust.multiply(new THREE.Vector3(adjust * 2, adjust * 2,adjust * 2));
   const self = this; //nasty
-  this.map = function(p) {
-    return densityGenerator(p.add(self.gridposadjust));
-  }
   this.makeObj();
 }
 
 
 chunk.prototype.makeObj = function(){
-  //if (workQ.length ==0) 
-  {doInWorker(this.gridposadjust,this.gridpos)} 
-  //else {
-  //  workQ.push({"a" : this.gridposadjust, "g": this.gridpos}); 
- // };
+  servitor.sendQuery('getIso',this.gridposadjust,this.gridpos,this.dims,this.bounds) 
 }
+
+
+ var bel = document.createElement('div')
+ bel.id= "blocker"
+ bel.style["background-color"] ="rgba(0,0,0,0.5)"; 
+ bel.style.width= "100%"
+ bel.style.height= "100%"
+ bel.style.position= "absolute"
+ document.body.append(bel)
+
+ var iel = document.createElement('div')
+ iel.id= "instructions"
+ iel.style.color ="white"
+ iel.style.width= "100%"
+ iel.style.height= "100%"
+ iel.style.position= "absolute"
+ iel.innerHTML = "clicky for cursory"
+ 
+ bel.append(iel)
+
+ var blocker = document.getElementById( 'blocker' );
+           
+var instructions = document.getElementById( 'instructions' );
+            var havePointerLock = 'pointerLockElement' in document || 'mozPointerLockElement' in document || 'webkitPointerLockElement' in document;
+            if ( havePointerLock ) {
+                var element = document.body;
+                var pointerlockchange = function ( event ) {
+                    if ( document.pointerLockElement === element || document.mozPointerLockElement === element || document.webkitPointerLockElement === element ) {
+                        controls.enabled = true;
+                        blocker.style.display = 'none';
+                    } else {
+                        controls.enabled = false;
+                        blocker.style.display = '-webkit-box';
+                        blocker.style.display = '-moz-box';
+                        blocker.style.display = 'box';
+                        instructions.style.display = '';
+                    }
+                }
+                var pointerlockerror = function ( event ) {
+                    instructions.style.display = '';
+                }
+                // Hook pointer lock state change events
+                document.addEventListener( 'pointerlockchange', pointerlockchange, false );
+                document.addEventListener( 'mozpointerlockchange', pointerlockchange, false );
+                document.addEventListener( 'webkitpointerlockchange', pointerlockchange, false );
+                document.addEventListener( 'pointerlockerror', pointerlockerror, false );
+                document.addEventListener( 'mozpointerlockerror', pointerlockerror, false );
+                document.addEventListener( 'webkitpointerlockerror', pointerlockerror, false );
+                instructions.addEventListener( 'click', function ( event ) {
+                    instructions.style.display = 'none';
+                    // Ask the browser to lock the pointer
+                    element.requestPointerLock = element.requestPointerLock || element.mozRequestPointerLock || element.webkitRequestPointerLock;
+                    if ( /Firefox/i.test( navigator.userAgent ) ) {
+                        var fullscreenchange = function ( event ) {
+                            if ( document.fullscreenElement === element || document.mozFullscreenElement === element || document.mozFullScreenElement === element ) {
+                                document.removeEventListener( 'fullscreenchange', fullscreenchange );
+                                document.removeEventListener( 'mozfullscreenchange', fullscreenchange );
+                                element.requestPointerLock();
+                            }
+                        }
+                        document.addEventListener( 'fullscreenchange', fullscreenchange, false );
+                        document.addEventListener( 'mozfullscreenchange', fullscreenchange, false );
+                        element.requestFullscreen = element.requestFullscreen || element.mozRequestFullscreen || element.mozRequestFullScreen || element.webkitRequestFullscreen;
+                        element.requestFullscreen();
+                    } else {
+                        element.requestPointerLock();
+                    }
+                }, false );
+            } else {
+                instructions.innerHTML = 'Your browser doesn\'t seem to support Pointer Lock API';
+            }
+
+
 
 
 //obj.material = deformMat;
 app.on('tick', (dt) => {
   kd.tick();
+  controls.update(dt)
   time += dt / 1000;
   deformMat.uniforms.iGlobalTime.value = time;
   composer.render(scene, camera);
@@ -316,6 +486,7 @@ app.on('tick', (dt) => {
 
   world.step(world.fixedTimeStep, dt, world.maxSubSteps);
 
+  
   // run system inits
   ents.queryComponents([Graphics]).forEach((each) => {
     if (!each.graphics.inScene) {
@@ -325,6 +496,7 @@ app.on('tick', (dt) => {
   ents.queryComponents([Physics]).forEach((each) => {
     if (!each.physics.body) {
       initPhysics(world, each);
+
     }
   });
   // run systems
@@ -365,8 +537,21 @@ app.on('resize', resize);
 
 
 
+kd.Z.down(() => {
+  for ( var c in chunks){
+ if (chunks[c].material == passMat){
+    chunks[c].material = wireMat
+ }else {
+    chunks[c].material = passMat
+
+ }
+  }
+});
 
 kd.W.down(() => {
+  
+   
+  
   ents.queryComponents([WASD]).forEach((each) => {
     each.physics.body.applyLocalImpulse(
       new CANNON.Vec3(0, 0, -1),
@@ -376,6 +561,7 @@ kd.W.down(() => {
 });
 
 kd.S.down(() => {
+
   ents.queryComponents([WASD]).forEach((each) => {
     each.physics.body.applyLocalImpulse(
       new CANNON.Vec3(0, 0, 1),
@@ -385,6 +571,7 @@ kd.S.down(() => {
 });
 
 kd.A.down(() => {
+
   ents.queryComponents([WASD]).forEach((each) => {
     each.physics.body.applyLocalImpulse(
       new CANNON.Vec3(-0.1, 0, 0),
@@ -394,6 +581,7 @@ kd.A.down(() => {
 });
 
 kd.D.down(() => {
+
   ents.queryComponents([WASD]).forEach((each) => {
     each.physics.body.applyLocalImpulse(
       new CANNON.Vec3(0.1, 0, 0),
@@ -430,12 +618,12 @@ function setupCamera() {
 
 function setupWorld() {
   const wor = new CANNON.World();
-  // wor.gravity = new CANNON.Vec3(0, -0.1, 0) // m/s²
+   wor.gravity = new CANNON.Vec3(0, -1, 0) // m/s²
   //wor.gravity = new CANNON.Vec3(0, 0, 0); // m/s²
 
   wor.broadphase = new CANNON.NaiveBroadphase();
 
-  wor.solver.iterations = 10;
+  wor.solver.iterations = 2;
 
 
   wor.fixedTimeStep = 1 / 60; // physics engine setting - keeps render framerate and sim in sync
@@ -493,6 +681,21 @@ function setupComposer() {
 }
 
 makeChunks();
+
+const controls = new PointerLockControls( camera );
+scene.add( controls.getObject() );
+
+
+var controlsEnabled = false;
+			var moveForward = false;
+			var moveBackward = false;
+			var moveLeft = false;
+			var moveRight = false;
+			var canJump = false;
+			var velocity = new THREE.Vector3();
+
+
+
 app.start()
 resize()
 

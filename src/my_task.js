@@ -1,41 +1,24 @@
-
 import SimplexNoise from 'simplex-noise'
 import * as THREE from 'three';
 import isosurface from 'isosurface';
 export default function (self) {
-self.addEventListener("message", go);
+const simplex = new SimplexNoise();//TODO check this is only called once as its expensive
 
-let i = 0
-const simplex = new SimplexNoise();
-
-function go(message) {
-  self.gridposadjust = message.data.gridposadjust;
-  self.gridpos = message.data.gridpos;
-  var d = 24;
-  var dims = [d, d, d];
-  var b = 2;
-  var bounds = [[-b, -b, -b ], [b, b, b]];
-  
-  let map = function(p) {
-    return densityGenerator(p.add(self.gridposadjust));
+var queryableFunctions = {
+  getIso: function(gridposadjust,gridpos,d,b) {  
+  const dims = [d, d, d];
+  const bounds = [[-b, -b, -b ], [b, b, b]];
+  const map = function(p) {
+    return densityGenerator(p.add(gridposadjust));
   }
-  i ++;
-  let geom = new THREE.IsosurfaceGeometry(dims, map, bounds);
-    var p = new THREE.Vector3();
-    var compatibleMap = function(x, y, z) {
-        return map(p.fromArray([x, y, z]))
-    };
-  let result = {"positions": []}
- // let result = isosurface.marchingCubes(dims, compatibleMap, bounds)
-  self.postMessage({
-    "command":"done",
-    "geom": geom.toJSON(),
-    "gridpos" : self.gridpos,
-    "id" : i,
-    "result" : result
-  });
-}
-
+  const geom = new THREE.IsosurfaceGeometry(dims, map, bounds);
+    
+    reply('isoDone', geom.toJSON(),gridpos);
+  },
+  ping: function() {
+      reply('pong'); 
+  }
+};
 
 
 function flatFloor(vector){
@@ -61,6 +44,7 @@ function wall(vector,position,dimension){
   }
   return object
 }
+
 // distance fucntions adapted from http://iquilezles.org/www/articles/distfunctions/distfunctions.htm
 
 
@@ -125,6 +109,7 @@ function noise(vector,amount) {
 
 }
 
+
 function densityGenerator(vector){
   var rot = new THREE.Matrix4().makeRotationY(Math.PI/1.3);
   const twistWhole = opTx(vector, rot);
@@ -162,6 +147,26 @@ function densityGenerator(vector){
   return density;
 }
 
+
+// system functions
+
+function defaultReply(message) {
+  // your default PUBLIC function executed only when main page calls the queryableWorker.postMessage() method directly
+  // do something
+}
+
+function reply() {
+  if (arguments.length < 1) { throw new TypeError('reply - not enough arguments'); return; }
+  postMessage({ 'queryMethodListener': arguments[0], 'queryMethodArguments': Array.prototype.slice.call(arguments, 1) });
+}
+
+onmessage = function(oEvent) {
+  if (oEvent.data instanceof Object && oEvent.data.hasOwnProperty('queryMethod') && oEvent.data.hasOwnProperty('queryMethodArguments')) {
+    queryableFunctions[oEvent.data.queryMethod].apply(self, oEvent.data.queryMethodArguments);
+  } else {
+    defaultReply(oEvent.data);
+  }
+};
 
 
 
@@ -241,5 +246,6 @@ THREE.IsosurfaceGeometry.prototype = Object.create( THREE.Geometry.prototype );
 THREE.IsosurfaceGeometry.prototype.constructor = THREE.IsosurfaceGeometry;
 
 
-}
 
+
+}

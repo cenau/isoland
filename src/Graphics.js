@@ -4,10 +4,11 @@ export default Graphics;
 
 
 function Graphics() {
-  this.mesh = new THREE.Mesh(new THREE.SphereGeometry(
+  this.geom = new THREE.SphereGeometry(
     1, 1,
     1, 1,
-  ));
+  );
+  this.mesh = new THREE.Mesh(this.geom)
   this.inScene = false;
 }
 
