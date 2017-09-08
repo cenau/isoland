@@ -6,16 +6,20 @@ export default function (self) {
 const simplex = new SimplexNoise();//TODO check this is only called once as its expensive
 
 var queryableFunctions = {
-  getIso: function(gridposadjust,gridpos,d,b,caller) {  
+  getIso: function(gridposadjust,gridpos,d,b,s,blocking) {
+  self.scaleFactor = s;
   const dims = [d, d, d];
   const bounds = [[-b, -b, -b ], [b, b, b]];
   const map = function(p) {
     return densityGenerator(p.add(gridposadjust));
   }
   const geom = new THREE.IsosurfaceGeometry(dims, map, bounds);
-    
-    reply('isoDone', geom.toJSON(),gridpos,caller);
-  },
+    if (blocking) {reply('isoDoneBlocking', geom.toJSON(),gridpos);
+    }
+    else {
+      reply('isoDone', geom.toJSON(),gridpos);
+    }
+    },
   ping: function() {
       reply('pong'); 
   }
@@ -59,7 +63,6 @@ function opTx( p, m )
     return q;
 }
 
-
 function sdBox( p, b ,s)
 {
   let d = {}
@@ -69,6 +72,24 @@ function sdBox( p, b ,s)
   return (Math.min(Math.max(d.x,Math.max(d.y,d.z)),0.0) + Math.max(d.x,0.0) + Math.max(d.y,0.0) + Math.max(d.z,0.0)) * s;
 }
 
+function  sdTorus( p, t )
+{
+  let q = new THREE.Vector2(new THREE.Vector2(p.x,p.z).length() - t.x,p.y);
+  return q.length()-t.y;
+}
+
+function sdSphere( p, s )
+{
+  let q = p.clone();
+  return q.length()-s;
+}
+
+function  sdCone( p, c )
+{
+  let q = Math.sqrt(Math.pow(p.x,2) +Math.pow(p.z,2));
+  console.log(c.dot(new THREE.Vector2(q,p.z)))
+  return c.dot(new THREE.Vector2(q,p.z));
+}
 
 function sphere(vector){
   let object  = Math.sqrt(vector.x * vector.x + vector.y * vector.y - vector.z * vector.z) - 1;
@@ -110,13 +131,15 @@ function noise(vector,amount) {
 
 }
 
-
-function densityGenerator(vector){
-  var rot = new THREE.Matrix4().makeRotationY(Math.PI/1.3);
-  const twistWhole = opTx(vector, rot);
-  let density = flatFloor(vector);
-
-  vector = twistWhole;
+function fortMap(vector){
+  let rot = new THREE.Matrix4().makeRotationY(Math.PI/1.3);
+  let rot2 = new THREE.Matrix4().makeRotationX(Math.sin(vector.z * 0.01) * 0.7);
+  let rot3 = new THREE.Matrix4().makeRotationAxis(vector,0.01)
+  let twistWhole = opTx(vector, rot);
+  twistWhole = opTx(twistWhole,rot3);
+  let density = flatFloor(twistWhole);
+  vector = vector;
+  vector.divideScalar(self.scaleFactor);
   rot = new THREE.Matrix4().makeRotationY(Math.sin(vector.y) * 0.3);
   const twist = opTx(vector, rot);
   let wall = surroundingWall(twist) +  Math.cos(vector.z) + Math.sin(vector.y); 
@@ -126,26 +149,48 @@ function densityGenerator(vector){
   keep = Math.max(keep,-building(new THREE.Vector3(vector.x * 1.1,vector.y * (1.- vector.y),vector.z *1.1))) + noise(vector, 0.2);
   density = Math.min(density, wall);
   density = Math.min(density, keep);
-  //density = Math.min(density,bendyWall(new THREE.Vector3(vector.x,vector.y,vector.z),new THREE.Vector3(0,0.1,0) , 1.5 , 1. ,new THREE.Vector3(0.2,1.2,1),true));
- // density = Math.min(density,bendyWall(new THREE.Vector3(vector.x,vector.y,vector.z),new THREE.Vector3(0,0.4,0) , 0.2 , 1. ,new THREE.Vector3(0.2,0.8,1),true));
-  //density = Math.min(density,bendyWall(new THREE.Vector3(vector.x + 1,vector.y,vector.z),new THREE.Vector3(0,0.4,0) , 0.2 , 1. ,new THREE.Vector3(0.2,0.8,1),true));
-   //density = Math.min(density,bendyWall(new THREE.Vector3(vector.x+2,vector.y,vector.z),new THREE.Vector3(0,0.2,0) , 1.5 , 1. ,new THREE.Vector3(0.2,0.3,1),true));
-  //let ruin = bendyWall(new THREE.Vector3(vector.x+4,vector.y,vector.z),new THREE.Vector3(vector.x,vector.y+1,vector.z) , 0.1 , 1. ,new THREE.Vector3(1,1,2),true);
-  //ruin = Math.max(ruin, -sdBox(new THREE.Vector3(vector.x + 4,vector.y,vector.z), new THREE.Vector3(0.8,2.0,0.8),1));
-  //ruin = Math.max(ruin, -sdBox(new THREE.Vector3(vector.x + 3.5,vector.y,vector.z), new THREE.Vector3(1.0,0.5,0.2),1));
-  //density = Math.min(density,ruin);
-  //density = bendyWall(new THREE.Vector3(vector.x,vector.y,vector.z), 0.5 , 1. ,new THREE.Vector3(0.2,0.8,1),true);
-  //density -= wall(vector, new THREE.Vector3(1,1,1),new THREE.Vector3(1,1,6));
-  // if (vector.x > Math.abs(Math.cos(vector.z)) && vector.x < Math.abs(Math.cos(vector.z)) + 0.2 && vector.y < 1.){
-   // density -= pillar(vector) * Math.abs(Math.sin(vector.z * 0.5) * 3 )
- // };
- 
+  rot = new THREE.Matrix4().makeRotationX(Math.PI/2);
+  var rotScale = opTx(vector,rot);
+  const sc = 0.6
+  rotScale.divideScalar(sc);
   
-  
+  density = Math.min(density,sdTorus(rotScale, new THREE.Vector2(sc,sc * 0.33))*sc);
 
+
+  let walkrot = vector
+  rot = new THREE.Matrix4().makeRotationZ(Math.sin(vector.x * 0.25)*0.0001);
+  rot.makeRotationY(Math.sin(vector.x * 0.25)*0.001);
+  walkrot = opTx(vector,rot)
+  let walkway = sdBox(new THREE.Vector3(walkrot.x+8,walkrot.y+0.5,walkrot.z), new THREE.Vector3(5,0.2,1), 1);
+  let sidewall = sdBox(new THREE.Vector3(walkrot.x+8,walkrot.y+0.1,walkrot.z+ 0.5), new THREE.Vector3(5,0.2,0.2), 1);
+  let sidewall2 = sdBox(new THREE.Vector3(walkrot.x+8,walkrot.y+0.1,walkrot.z- 0.5), new THREE.Vector3(5,0.2,0.2), 1);
+  walkway = Math.min(walkway,sidewall)
+  walkway = Math.min(walkway,sidewall2)
+  let landingSphere = sdSphere(new THREE.Vector3(walkrot.x +8, walkrot.y + 0.5, walkrot.z),0.8)
+   //landingSphere = Math.max(-landingSphere, sdSphere( new THREE.Vector3(walkrot.x +8, walkrot.y + 0.5,walkrot.z),0.9))
+   landingSphere = Math.max(landingSphere,-sdBox( new THREE.Vector3(walkrot.x +7.5, walkrot.y + 0.35,walkrot.z),new THREE.Vector3(0.5,0.4,0.3),1))
+  walkway = Math.min(walkway,landingSphere)
+  density = Math.min(density,walkway)
   if (density >0)  {density +=  simplex.noise3D(vector.x,vector.y,vector.z) * 0.1}; 
   if (density <=0)  {density +=  simplex.noise3D(vector.x,vector.y,vector.z) * 0.1}; 
+  
+  density * self.scaleFactor;
   return density;
+
+
+
+}
+
+function desertMap(vector){
+  vector =new THREE.Vector3(vector.x,vector.y+0.8,vector.z);
+  let density = flatFloor(vector);
+  return density;
+}
+
+
+function densityGenerator(vector){
+  return fortMap(vector);
+ // return desertMap(vector);
 }
 
 

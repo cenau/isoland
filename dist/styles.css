@@ -1,0 +1,16 @@
+#blocker {
+ 	background-color:rgba(0,0,0,0.9);
+	width:100%;
+	height:100%;
+	position:absolute;
+        top:0px;
+        left:0px;
+	display:flex;
+	align-items:center;
+	justify-content:center;
+}
+
+#instructions {
+	color:white;
+
+}

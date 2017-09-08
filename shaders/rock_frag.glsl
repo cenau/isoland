@@ -15,7 +15,7 @@ uniform float logDepthBufFC;
 varying float vFragDepth;
 varying vec3 vViewPos;
 varying vec3 vWorldPos;
-
+uniform float scale;
  
 #pragma glslify: snoise3 = require(glsl-noise/simplex/3d) 
 #pragma glslify: fog_exp = require(glsl-fog/exp) 
@@ -86,7 +86,7 @@ void main() {
     vec3 st = vWorldPos; 
     // Scale 
     //st *= .12;
-    st *= .01;
+    st *= scale;
     
     // Tile the space
     vec3 i_st = floor(st);
@@ -137,8 +137,9 @@ void main() {
   //vec3 grass = vec3(.3,.7,.3) * abs(color) * snoise3(vWorldPos * 0.12);
   vec3 grass = vec3(.3,.9,.3) * 0.5;
 
-  grass+= vec3(rock * vec3(0.,1.,0.));
-  color = mix(grass,rock,smoothstep(0.,0.4,vWorldPos.y));  
+  grass+= vec3(rock * vec3(0.,0.1,0.));
+  //color = mix(grass,rock,smoothstep(0.,0.4,vWorldPos.y));  
+  color = mix(grass,rock,smoothstep(-75. + snoise3(vWorldPos * 0.001) * 50.,0.,vWorldPos.y));
 float fogDistance = gl_FragCoord.z / gl_FragCoord.w;
   float fogAmount = fog_exp2(fogDistance, FOG_DENSITY);
   vec4 fogColor = vec4(1.,0.86,0.86,1.); // white 

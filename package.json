@@ -12,7 +12,8 @@
     "three": "*",
     "three-effectcomposer": "0.0.1",
     "tiny-ecs": "^2.0.0",
-    "canvas-loop": "*"
+    "canvas-loop": "*",
+    "dat.gui": "dataarts/dat.gui"
   },
   "devDependencies": {
     "babel-cli": "*",
@@ -31,7 +32,7 @@
     ]
   },
   "scripts": {
-    "dev": "budo src/main.js:dist/main.js --host=localhost --live",
+    "dev": "budo src/main.js:dist/main.js --css styles.css --host=localhost --live",
     "build": "browserify src/main.js -o dist/main.js",
     "lint": "eslint src/*.js; exit 0",
     "lint:fix": "eslint src/*.js --fix"

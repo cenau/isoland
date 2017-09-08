@@ -3,60 +3,237 @@ import createLoop from 'canvas-loop';
 import kd from 'keydrown';
 import ecs from 'tiny-ecs';
 import ec from 'three-effectcomposer';
-import CANNON from 'cannon';
 import isosurface from 'isosurface';
 import EventEmitter from 'events';
-import PointerLockControls from 'three-pointerlock';
+import PointerLockControls from './three-pointerlock';
 import QWorker from './DensityQWorker';
 import QueryableWorker from './QueryableWorker';
-
+import ProgressBar from 'progressbar.js';
+import dat from 'dat.gui';
 // systems
-import initPhysics from './initPhysics';
 import initGraphics from './initGraphics';
-import stickToTargetSystem from './stickToTargetSystem';
-
+import Tone from 'tone';
+import Tonal from 'tonal'
 // components
-import Physics from './Physics';
-import WASD from './WASD';
 import Graphics from './Graphics';
-import StickToTarget from './StickToTarget';
 import Position from './Position';
 import Quaternion from './Quaternion';
 
 
+//from https://github.com/Tonejs/Tone.js/blob/master/examples/scripts/THREE.Tone.js
+/**
+ *  Update the listener's position and orientation based on
+ *  a THREE.Object3D that is passed in.
+ *  Adapted from https://github.com/mrdoob/three.js/blob/dev/src/audio/PositionalAudio.js
+ *  @param  {THREE.Object3D}  object
+ *  @return  {Tone.Panner3D}  this
+ */
+Tone.Listener.constructor.prototype.updatePosition = (function(){
+
+	if (!THREE){
+		throw new Error("this method requires THREE.js");
+	}
+
+	var position = new THREE.Vector3();
+	var quaternion = new THREE.Quaternion();
+	var scale = new THREE.Vector3();
+
+	var orientation = new THREE.Vector3();
+
+	return function(object){
+		var up = object.up;
+		object.matrixWorld.decompose( position, quaternion, scale);
+		orientation.set(0, 0, -1).applyQuaternion( quaternion);
+
+		this.setPosition(position.x, position.y, position.z);
+
+		this.setOrientation(orientation.x, orientation.y, orientation.z, up.x, up.y, up.z);
+	};
+
+}());
+const shuffle = (arr) => arr.sort(() => (Math.random() - 0.5))
+
+
+Tone.Transport.bpm.value = 100;
+
+class Conductor {
+  constructor() {
+    this.scale = this.generateScale();
+  }
+  generateScale() {
+    const scale =
+      Tonal.scale(
+        'G ' + 
+        shuffle(Tonal
+          .scale.names())[0]
+      )
+    return scale  
+  }
+  generateFreqs(){
+    const notes = shuffle(this.scale.map(note => Tonal.transpose(note + '1', '16M'))); 
+
+    const freqs = notes.map(note => Tonal.note.freq(note))
+    return freqs
+    
+  }
+
+  update(){
+
+    this.scale = this.generateScale();
+  }
+}
+
+const conductor = new Conductor();
+
+function makeBellPart(bell,timing){
+		return new Tone.Sequence(function(time, freq){
+			bell.frequency.setValueAtTime(freq + Math.random() * 0.5, time, Math.random()*0.5 + 0.5);
+			bell.triggerAttack(time);
+		}, conductor.generateFreqs(), timing);
+
+
+}
+function makeCongaPart(){
+		return congaPart = new Tone.Sequence(function(time, pitch){
+			conga.triggerAttack(pitch, time, Math.random()*0.5 + 0.5);
+		}, conductor.generateFreqs(), "4t");
+}
+var bell = new Tone.MetalSynth({
+			"harmonicity" : 50,
+			"resonance" : 200,
+			"modulationIndex" : 50,
+			"envelope" : {
+				"decay" : 3,
+				"sustain" : 1,
+			},
+			"volume" : -30
+		}).toMaster();
+		var bellPart = makeBellPart(bell,"1t").start(0); 
+var bell2 = new Tone.MetalSynth({
+			"harmonicity" : 100,
+			"resonance" : 100,
+			"modulationIndex" : 30,
+			"envelope" : {
+				"decay" : 3,
+				"sustain" : 1,
+			},
+			"volume" : -40
+		}).toMaster();
+		var bellPart2 = makeBellPart(bell2, "2t").start(0); 
+
+var conga = new Tone.MembraneSynth({
+			"pitchDecay" : 0.008,
+			"octaves" : 2,
+			"envelope" : {
+				"attack" : 0.0006,
+				"decay" : 0.5,
+				"sustain" : 0.1
+			}
+		}).toMaster();
+		var congaPart = makeCongaPart().start(0); 
+
+
+
+
+Tone.Transport.scheduleRepeat(updateFreqs, "4m", "4m");
+
+function updateFreqs(){
+  conductor.update();
+	bellPart = makeBellPart(bell,"1t");
+	bellPart2 = makeBellPart(bell2,"2t");
+	congaPart = makeCongaPart(); 
+}
 //  stuff that should be imports but doesnt work
 const EffectComposer = ec(THREE);
 // import { glslify } from 'glslify'
 const glslify = require('glslify');
 // needed for bug https://github.com/stackgl/glslify/issues/49 - if you try using fixes like glslify babel plugin, then shaders wont live reload!!
 
+const worldDebug = false;
 
-const scale = 50
-//const adjust = 1.935; //32 @ 10
-//const adjust = 1.876;  //32 
-const adjust = 1.876;  //24 
-//const adjust = 1.750; // 8 @ 10
+// sF 10 and scale 10
+// sF 10 and scale 100 ; cool 
+
+
+const adjustLookup = [{dims:4, adjust:1.5},{dims:8, adjust:1.750 },{dims:24, adjust:1.876 },{dims:32, adjust:1.935}  ]
+
+let scale = 20
+if (worldDebug == true){
+scale = 2;
+}
+const sf = 10
+const dims = 4
+const adjust = adjustLookup
+  .find(x => x.dims ===dims)
+  .adjust;  
 
 //assets
+//
+var noise = new Tone.Noise({
+			"volume" : 0,
+			"type" : "brown"
+		})
 
+var osc = new Tone.Oscillator({
+			"frequency" : 440,
+			"volume" : 10
+		})
+
+var osc2 = new Tone.Oscillator({
+			"frequency" : 200,
+			"volume" : 10
+		})
+
+var noiseb = new Tone.Noise({
+			"volume" : 0,
+			"type" : "brown"
+		})
+
+var oscb = new Tone.Oscillator({
+			"frequency" : 440,
+			"volume" : 10
+		})
+
+var osc2b = new Tone.Oscillator({
+			"frequency" : 200,
+			"volume" : 10
+		})
+
+var cheby = new Tone.Chebyshev(50);
+var crusher = new Tone.BitCrusher(8).connect(cheby);
+crusher.toMaster();
+var audioTarget = new Tone.Panner3D().connect(crusher);
+var audioTargetb = new Tone.Panner3D().connect(crusher);
+osc.connect(audioTarget);
+osc.sync();
+osc.start();
+osc2.connect(audioTarget);
+osc2.sync();
+osc2.start();
+noise.connect(audioTarget);
+noise.sync();
+noise.start();
+oscb.connect(audioTargetb);
+oscb.sync();
+oscb.start();
+osc2b.connect(audioTargetb);
+osc2b.sync();
+osc2b.start();
+noiseb.connect(audioTargetb);
+noiseb.sync();
+noise.start();
+//loop.start("1m");
+Tone.Transport.start();
 const scene = new setupScene()
+const gui = new dat.GUI()
+document.getElementsByClassName('dg')[0].style.zIndex = 1;
+document.getElementsByClassName('dg')[0].style.display = "none";
+let uScale = {"value":0.01};
+gui.add(uScale, 'value',0.000,10).name('scale');
 
 // physics
 
-const world = setupWorld();
-
-
-  const body = new CANNON.Body({
-    mass: 0,
-     position: new CANNON.Vec3(0, 0, 0), // m 
-    shape: new CANNON.Plane(100),
-  });
-
-  var rot = new CANNON.Vec3(1,0,0)
-  body.quaternion.setFromAxisAngle(rot, -Math.PI/2)
-  world.addBody(body);
-
-
+const raycaster = new THREE.Raycaster( new THREE.Vector3(), new THREE.Vector3( 0, - 1, 0 ), 0, 10 );;
 //  canvas for rendering
 const canvas = document.createElement('canvas');
 document.body.appendChild(canvas);
@@ -70,18 +247,27 @@ const composer = setupComposer();
 // setup ecs
 const ents = new ecs.EntityManager(); // ents, because, i keep misspelling entities
 
+let navMeshes = []
 // the player
 const player = ents.createEntity();
 
 player.addComponent(Position);
 player.addComponent(Quaternion);
-player.addComponent(Physics);
 player.addComponent(Graphics);
-//player.addComponent(WASD);
 
-player.position.y = 4;
+player.position.y = 0;
 
+const collideGeom = new THREE.BoxGeometry(10,10,10,1);
+const collideMesh = new THREE.Mesh(collideGeom);
+collideMesh.position.y = 15;
+scene.add(collideMesh);
 
+const navGeom = new THREE.TetrahedronGeometry(1,0);
+const landingGeom = new THREE.CylinderGeometry(30,30,200,32);
+const landingMesh = new THREE.Mesh(landingGeom);
+landingMesh.position.y = -60;
+landingMesh.position.x = -1500;
+scene.add(landingMesh);
 
 // procedural deformation texture
 const deformMat = new THREE.ShaderMaterial({
@@ -101,14 +287,25 @@ const deformMat = new THREE.ShaderMaterial({
 
 
 
-
-
 const passMat = new THREE.ShaderMaterial({
   vertexShader: glslify('../shaders/rock_vert.glsl'),
   fragmentShader: glslify('../shaders/rock_frag.glsl'),
   uniforms: {
     iGlobalTime: { type: 'f', value: 0 },
     iResolution: { type: 'v2', value: new THREE.Vector2() },
+    scale: { type: 'f', value: uScale.value },
+  },
+  defines: {
+    USE_MAP: '',
+  },
+});
+const runeMat = new THREE.ShaderMaterial({
+  vertexShader: glslify('../shaders/rock_vert.glsl'),
+  fragmentShader: glslify('../shaders/rune_frag.glsl'),
+  uniforms: {
+    iGlobalTime: { type: 'f', value: 0 },
+    iResolution: { type: 'v2', value: new THREE.Vector2() },
+    scale: { type: 'f', value: uScale.value },
   },
   defines: {
     USE_MAP: '',
@@ -126,25 +323,8 @@ composer.passthroughEffect.uniforms.iResolution.value.set(app.shape[0], app.shap
 // time - for passing into shaders
 let time = 0;
 
-// the terrain plane
-const geom = new THREE.PlaneGeometry(
-  300, 300, // Width and Height
-  300, 300, // Terrain resolution
-);
 
 
-const plane = ents.createEntity();
-plane.addComponent(Graphics);
-plane.addComponent(Position);
-plane.addComponent(StickToTarget);
-plane.graphics.mesh = new THREE.Mesh(geom);
-
-plane.graphics.mesh.material = deformMat;
-plane.graphics.mesh.material.side = THREE.DoubleSide;
-plane.graphics.mesh.rotation.x -= (90 * Math.PI) / 180;
-plane.stickToTarget.target = player;
-
-plane.remove()
 
 
 document.addEventListener("DOMContentLoaded", function(event) 
@@ -154,9 +334,6 @@ document.addEventListener("DOMContentLoaded", function(event)
 
 var servitor = new QueryableWorker(QWorker)
 
- servitor.addListener('isoDone', function (geom, gridpos) {
-      addChunkToWorld(geom,gridpos);
-    });
 //from https://stackoverflow.com/questions/20774648/three-js-generate-uv-coordinate
 function assignUVs2(geometry) {
 
@@ -212,53 +389,118 @@ function assignUVs(geometry) {
 
 
 const wireMat = new THREE.MeshBasicMaterial({
-    color: 0xff0000,
+    color: 0xffffff,
     wireframe: true
 });
 
-const chunks = []
-function addChunkToWorld(g,gridpos){
-  var loader = new THREE.JSONLoader();
-     let geom = loader.parse( g ).geometry
-    geom.__proto__ = THREE.IsosurfaceGeometry.prototype;
-    assignUVs(geom);
-    geom.scale(scale,scale,scale);
-   
+collideMesh.material = runeMat;
+landingMesh.material = runeMat;
+landingMesh.material.transparent = true
+collideMesh.material.transparent = true
+landingMesh.material.side = THREE.DoubleSide;
+
+function ChunkManager(webWorker,progress){
+  this.dims = dims;
+  this.bounds = 2;
+  this.webWorker = webWorker;
+  this.chunks = [];
+  this.requested = [];
+  this.progress = progress;
+}
 
 
-
-     
+ChunkManager.prototype.getNeighbours = function(gridpos){
+  let neighbourPos = []; 
+ 
+  for (let k= -5;k<5;k++){
+  for (let j=-3;j<=3;j++){
+  for (let i =0; i <10;i++){
+  let vector = camera.getWorldDirection();
+  let theta = Math.atan2(vector.x,vector.z);
+  let result = new THREE.Vector3();
+  
+  result.copy(gridpos);
+  result.x = result.x + Math.sin(theta + j * 0.1) * i;
+  result.z = result.z + Math.cos(theta + j * 0.1)*i;
+  result.x = Math.round(result.x);
+    result.y = result.y + k
+  result.z = Math.round(result.z);
+  neighbourPos.push([result.x,result.y,result.z]);
+        
+  }
+  }
+  }
+  let missing = []
+  for (let p in neighbourPos){
+    let pos = new THREE.Vector3(neighbourPos[p][0],neighbourPos[p][1],neighbourPos[p][2]);
   
 
-    let obj = new THREE.Mesh(geom);
-    obj.material.side = THREE.DoubleSide;
-    obj.material = passMat
-    obj.material = wireMat
-    scene.add(obj);
-    obj.position.set(gridpos.x * adjust * 2 * scale ,gridpos.y * adjust * 2 * scale ,gridpos.z * adjust * 2 * scale);
-    chunks.push(obj)
+    const thisChunk = this.chunks.find(x => x.gridpos.equals(pos));
+    
+    if (thisChunk === undefined){
+      missing.push(pos);
+    }
+  }
+  return missing;
+}
+ChunkManager.prototype.worldToGrid = function(worldpos){
+ let gridpos = new THREE.Vector3();
+  gridpos.copy(worldpos);
+
+  gridpos.x * adjust * 2 * scale
+  gridpos.z * adjust * 2 * scale
+  gridpos.y * adjust * 2 * scale
+  gridpos.divideScalar(adjust * 2 * scale);
+  gridpos.round();
+  return gridpos;
+
+}
+ChunkManager.prototype.update = function(player){
+ 
+  const gridpos = this.worldToGrid(new THREE.Vector3(player.position.x,player.position.y,player.position.z));
+   
+  const missing = this.getNeighbours(gridpos);
+  for (let chunk in missing){
+    let loadIt = false;
+    if (this.requested.length == 0){
+      loadIt = true;
+    }
+    else{
+     if (!this.requested.find(x => x.equals(missing[chunk]))){
+      loadIt = true 
+     }
+      
+      
+    
+  }
+    if (loadIt ==true){
+      this.requestChunk(missing[chunk],false);
+        this.webWorker.addListener('isoDone', (geom, gridpos) => {
+          this.addChunkToWorld(geom,gridpos);
+        });
+  }
   }
 
-function  makeChunk(i,j,k){
-        const c = new chunk(new THREE.Vector3(i,j,k));
-//        scene.add(c.obj);
-  //      c.obj.position.set(i * adjust * 2 * scale ,j * adjust * 2 * scale ,k * adjust * 2 * scale);
+}
 
-  }    
-function  makeChunks() {
-        const gridsize = new THREE.Vector3(3,3,3);
+ChunkManager.prototype.requestInitialChunks = function(gridsize,origin) {
         const chunkLength  = gridsize.x * gridsize.y * gridsize.z; 
-    
+        this.progress.total += chunkLength; 
         let normalisedGrid = new THREE.Vector3(
     (gridsize.x - 1) /2,
-    gridsize.y,
+    (gridsize.y -1) /2,
     (gridsize.x -1) /2 
   );
 
+  
   for (let i = -normalisedGrid.x;i<=normalisedGrid.x; i++){
-    for (let j = 0;j<normalisedGrid.y; j++){
+    for (let j = -normalisedGrid.y;j<=normalisedGrid.y; j++){
       for (let k = -normalisedGrid.z;k<=normalisedGrid.z; k++){
-        makeChunk(i,j,k);
+        this.requestChunk(new THREE.Vector3(origin.x + i, origin.y + j,origin.z + k),true);
+        this.webWorker.addListener('isoDoneBlocking', (geom, gridpos) => {
+            this.addChunkToWorld(geom,gridpos);
+          this.progress.increment();
+        });
       }
     }
    }
@@ -266,55 +508,135 @@ function  makeChunks() {
 
 
 
-function chunk(gridpos){
-  this.gridpos = gridpos;
-  this.dims = 24;
-  this.bounds = 2;
-  this.gridposadjust = new THREE.Vector3(gridpos.x,gridpos.y,gridpos.z);
-  this.gridposadjust.multiply(new THREE.Vector3(adjust * 2, adjust * 2,adjust * 2));
-  const self = this; //nasty
-  this.makeObj();
+ChunkManager.prototype.requestChunk = function(gridpos,blocking){
+  let gridposadjust = new THREE.Vector3(gridpos.x,gridpos.y,gridpos.z);
+  gridposadjust.multiply(new THREE.Vector3(adjust * 2, adjust * 2,adjust * 2));
+  this.requested.push(gridpos)
+  servitor.sendQuery('getIso',gridposadjust,gridpos,this.dims,this.bounds,sf,blocking) 
 }
 
 
-chunk.prototype.makeObj = function(){
-  servitor.sendQuery('getIso',this.gridposadjust,this.gridpos,this.dims,this.bounds,this) 
+ChunkManager.prototype.addChunkToWorld = function(g,gridpos){
+  const loader = new THREE.JSONLoader();
+    let geom = loader.parse( g ).geometry
+    geom.__proto__ = THREE.IsosurfaceGeometry.prototype;
+    assignUVs(geom);
+    geom.scale(scale,scale,scale);
+    let obj = new THREE.Mesh(geom);
+    obj.material.side = THREE.DoubleSide;
+    obj.material = passMat
+    scene.add(obj);
+    obj.position.set(gridpos.x * adjust * 2 * scale ,gridpos.y * adjust * 2 * scale ,gridpos.z * adjust * 2 * scale);
+    obj.gridpos = new THREE.Vector3(gridpos.x,gridpos.y,gridpos.z);
+    this.chunks.push(obj) 
+    
+  }
+
+ChunkManager.prototype.switchMat = function(mat){
+  for ( var c in this.chunks){
+    this.chunks[c].material = mat
+
+    this.chunks[c].material.side = THREE.DoubleSide;
+  }
+  
 }
 
 
  var bel = document.createElement('div')
  bel.id= "blocker"
- bel.style["background-color"] ="rgba(0,0,0,0.5)"; 
- bel.style.width= "100%"
- bel.style.height= "100%"
- bel.style.position= "absolute"
+
+
  document.body.append(bel)
 
- var iel = document.createElement('div')
+ var iel = document.createElement('figcaption')
  iel.id= "instructions"
- iel.style.color ="white"
- iel.style.width= "100%"
- iel.style.height= "100%"
- iel.style.position= "absolute"
- iel.innerHTML = "clicky for cursory"
- 
- bel.append(iel)
+  
+ var pel = document.createElement('div')
+ pel.id= "progress"
+ pel.style.height = "200px" 
+ pel.style.width = "200px"
+ bel.append(pel)
+ pel.append(iel)
 
- var blocker = document.getElementById( 'blocker' );
-           
-var instructions = document.getElementById( 'instructions' );
+function Progress(){
+  this.total = 0;
+  this.current = 0;
+  this.graphic = new ProgressBar.Circle('#progress', {
+       text: {
+        // Initial value for text.
+        // Default: null
+        //value: 'Text',
+
+        // Text color.
+        // Default: same as stroke color (options.color)
+        //color: '#f00',
+
+        // Class name for text element.
+        // Default: 'progressbar-text'
+        //className: 'progressbar__label',
+   style: {
+          // or fontSize: '28px'
+          'font-size': 'xx-large',
+     'position': 'absolute',
+    'left': '50%',
+    'top': '50%',
+    'padding': '0px',
+    'margin': '0px',
+    'transform': 'translate(-50%, -50%)'
+        },
+        // If true, CSS is automatically set for container and text element.
+        // If you want to modify all CSS your self, set this to false
+        // Default: true
+        autoStyle: true
+    },
+        color: '#555',
+        strokeWidth: 5,
+    trailWidth: 1,
+     trailColor: '#555',
+        duration: 500,
+        easing: 'easeInOutQuart',
+    from: { color: '#999', width: 1 },
+  to: { color: '#ccc', width: 2 },
+  // Set default step function for all animate calls
+  step: function(state, circle) {
+    circle.path.setAttribute('stroke', state.color);
+    circle.path.setAttribute('stroke-width', state.width);
+    var value = Math.round(circle.value() * 100);
+    circle.setText(value);
+
+    if (value ==0) {
+     circle.setText("LOADING");
+
+    }
+    if (value ==100){
+    circle.setText("CLICK");
+      
+    }
+  }
+
+  });
+}
+
+Progress.prototype.increment = function(){
+  this.current ++
+  this.graphic.animate(this.current/this.total);
+  if (this.current >= this.total){
+    this.done()
+  }
+}
+Progress.prototype.done = function(){
+  //chunkManager.switchMat(passMat);
+  this.graphic.setText("CLICK");
             var havePointerLock = 'pointerLockElement' in document || 'mozPointerLockElement' in document || 'webkitPointerLockElement' in document;
             if ( havePointerLock ) {
                 var element = document.body;
                 var pointerlockchange = function ( event ) {
                     if ( document.pointerLockElement === element || document.mozPointerLockElement === element || document.webkitPointerLockElement === element ) {
                         controls.enabled = true;
-                        blocker.style.display = 'none';
+                         blocker.style.display = 'none';
                     } else {
                         controls.enabled = false;
-                        blocker.style.display = '-webkit-box';
-                        blocker.style.display = '-moz-box';
-                        blocker.style.display = 'box';
+                        blocker.style.display = 'flex';
                         instructions.style.display = '';
                     }
                 }
@@ -328,7 +650,7 @@ var instructions = document.getElementById( 'instructions' );
                 document.addEventListener( 'pointerlockerror', pointerlockerror, false );
                 document.addEventListener( 'mozpointerlockerror', pointerlockerror, false );
                 document.addEventListener( 'webkitpointerlockerror', pointerlockerror, false );
-                instructions.addEventListener( 'click', function ( event ) {
+                blocker.addEventListener( 'click', function ( event ) {
                     instructions.style.display = 'none';
                     // Ask the browser to lock the pointer
                     element.requestPointerLock = element.requestPointerLock || element.mozRequestPointerLock || element.webkitRequestPointerLock;
@@ -351,6 +673,12 @@ var instructions = document.getElementById( 'instructions' );
             } else {
                 instructions.innerHTML = 'Your browser doesn\'t seem to support Pointer Lock API';
             }
+  
+
+}
+
+ var blocker = document.getElementById( 'blocker' );
+var instructions = document.getElementById( 'instructions' );
 
 
 
@@ -358,15 +686,87 @@ var instructions = document.getElementById( 'instructions' );
 //obj.material = deformMat;
 app.on('tick', (dt) => {
   kd.tick();
+  if (worldDebug == true){
+  controls.getObject().position.y = 40;
+  controls.gravity = false;
+  }
+ 
+  const testPos = controls.getObject().position
+  if (testPos.x > -10 && testPos.x < 10 && testPos.z > -10 && testPos.z < 10){
+    console.log("THERE!")
+  }
+
+  Tone.Listener.updatePosition(camera);
+  audioTarget.updatePosition(collideMesh);
+  audioTargetb.updatePosition(landingMesh);
+  
+  for (let navMesh of navMeshes){
+    var dir = new THREE.Vector3(); 
+
+    navMesh.position.sub(dir.subVectors( navMesh.position, collideMesh.position ).normalize().multiplyScalar(5));
+  }
+  //player.position.x = controls.getObject().position.x
+  //player.position.y = controls.getObject().position.y
+  //player.position.z = controls.getObject().position.z
+
+ //collideMesh.position.copy(controls.getObject().position);  
+
+/*for (var vertexIndex = 0; vertexIndex < collideMesh.geometry.vertices.length; vertexIndex++)
+{       
+    var localVertex = collideMesh.geometry.vertices[vertexIndex].clone();
+    var globalVertex = localVertex.applyMatrix4( collideMesh.matrixWorld );
+    var directionVector = globalVertex.sub( collideMesh.position );
+
+    raycaster.ray.origin.copy(collideMesh.position)
+    raycaster.ray.direction = directionVector.clone().normalize() ;
+    var collisionResults = raycaster.intersectObjects( chunkManager.chunks );
+    if ( collisionResults.length > 0 && collisionResults[0].distance < directionVector.length() ) 
+    {
+       collisions++
+    }
+}
+*/
+ raycaster.ray.origin.copy( controls.getObject().position );
+					raycaster.ray.origin.y -= 10;
+          raycaster.ray.direction =new THREE.Vector3( 0, - 1, 0 )
+					var intersections = raycaster.intersectObjects( chunkManager.chunks );
+   if (intersections.length > 0) 
+    {  
+    controls.botDist = intersections[intersections.length-1].distance
+    } 
+      controls.isOnObject = intersections.length > 0;
+ raycaster.ray.origin.copy( controls.getObject().position );
+ raycaster.ray.direction = controls.getDirection(new THREE.Vector3()).clone().normalize()
+					intersections = raycaster.intersectObjects( chunkManager.chunks );
+    
+  if (controls.enabled){
+    if (landingMesh.position.y > -10000){
+    landingMesh.position.y -=1.5;
+    }
+  } 
+  controls.isCollision = intersections.length > 0; 
   controls.update(dt)
   time += dt / 1000;
-  deformMat.uniforms.iGlobalTime.value = time;
+  passMat.uniforms.scale.value = uScale.value;
+  runeMat.uniforms.iGlobalTime.value = time;
   composer.render(scene, camera);
   renderer.render(scene, camera, composer.bufferTexture);
   composer.passthroughEffect.uniforms.iGlobalTime.value = time;
+  let distortDistance = Math.min(testPos.distanceTo( collideMesh.position),testPos.distanceTo( landingMesh.position ) );
+  let distort = 0
+    if (distortDistance < 100) {
+    distort = 1 - distortDistance * 0.01;
+      console.log(distortDistance)
+    if (testPos.distanceTo( collideMesh.position) <=10)
+      {
+        distort *= 100;
+        window.location.replace('https://bitly.com/98K8eH');
+      }
+  }
+  composer.passthroughEffect.uniforms.amount.value = distort; 
+  //chunkManager.update(controls.getObject());
 
 
-  world.step(world.fixedTimeStep, dt, world.maxSubSteps);
 
   
   // run system inits
@@ -375,23 +775,7 @@ app.on('tick', (dt) => {
       initGraphics(scene, each);
     }
   });
-  ents.queryComponents([Physics]).forEach((each) => {
-    if (!each.physics.body) {
-      initPhysics(world, each);
-
-    }
-  });
   // run systems
-
-  // update position from physics
-  ents.queryComponents([Physics, Position]).forEach((each) => {
-    each.position.copy(each.physics.body.position);
-  });
-  // update quaternion from physics
-  ents.queryComponents([Physics, Quaternion]).forEach((each) => {
-    each.quaternion.copy(each.physics.body.quaternion);
-  });
-
 
   // update mesh from position
   ents.queryComponents([Graphics, Position]).forEach((each) => {
@@ -402,12 +786,11 @@ app.on('tick', (dt) => {
     each.graphics.mesh.quaternion.copy(each.quaternion);
   });
 
-  ents.queryComponents([Position, StickToTarget]).forEach((each) => {
-    stickToTargetSystem(each);
-  });
 
   camera.position.copy(player.position);
   camera.quaternion.copy(player.quaternion);
+  collideMesh.rotation.y += 0.001 * dt ;
+  collideMesh.rotation.z -= 0.001 * dt ;
 });
 
 
@@ -418,58 +801,45 @@ app.on('resize', resize);
 // keyboard input
 
 
+kd.Q.down(() => {
+/*
+let navMesh = new THREE.Mesh(navGeom);
+navMesh.position.copy(controls.getObject().position)
+navMesh.material = runeMat;
+navMesh.transparent = true;
+
+scene.add(navMesh)
+navMeshes.push(navMesh)
+*/
+});
 
 kd.Z.down(() => {
-  for ( var c in chunks){
- if (chunks[c].material == passMat){
-    chunks[c].material = wireMat
- }else {
-    chunks[c].material = passMat
 
- }
-  }
+  chunkManager.switchMat(wireMat);
+
+});
+kd.X.down(() => {
+  chunkManager.switchMat(passMat);
+
+
 });
 
 kd.W.down(() => {
-  
    
   
-  ents.queryComponents([WASD]).forEach((each) => {
-    each.physics.body.applyLocalImpulse(
-      new CANNON.Vec3(0, 0, -1),
-      new CANNON.Vec3(0, 0, 0),
-    );
-  });
+
 });
 
 kd.S.down(() => {
 
-  ents.queryComponents([WASD]).forEach((each) => {
-    each.physics.body.applyLocalImpulse(
-      new CANNON.Vec3(0, 0, 1),
-      new CANNON.Vec3(0, 0, 0),
-    );
-  });
 });
 
 kd.A.down(() => {
 
-  ents.queryComponents([WASD]).forEach((each) => {
-    each.physics.body.applyLocalImpulse(
-      new CANNON.Vec3(-0.1, 0, 0),
-      new CANNON.Vec3(0, 0, -0.1),
-    );
-  });
 });
 
 kd.D.down(() => {
 
-  ents.queryComponents([WASD]).forEach((each) => {
-    each.physics.body.applyLocalImpulse(
-      new CANNON.Vec3(0.1, 0, 0),
-      new CANNON.Vec3(0, 0, -0.1),
-    );
-  });
 });
 
 
@@ -498,21 +868,6 @@ function setupCamera() {
   return cam;
 }
 
-function setupWorld() {
-  const wor = new CANNON.World();
-   wor.gravity = new CANNON.Vec3(0, -1, 0) // m/s²
-  //wor.gravity = new CANNON.Vec3(0, 0, 0); // m/s²
-
-  wor.broadphase = new CANNON.NaiveBroadphase();
-
-  wor.solver.iterations = 2;
-
-
-  wor.fixedTimeStep = 1 / 60; // physics engine setting - keeps render framerate and sim in sync
-  wor.maxSubSteps = 10; // physics engine setting - not 100% sure what this does
-
-  return wor;
-}
 
 function setupScene() {
   const sce = new THREE.Scene();
@@ -545,9 +900,10 @@ function setupComposer() {
       tDiffuse: { type: 't', value: null }, // output from previous - all need this
       iResolution: { type: 'v2', value: new THREE.Vector2() },
       iGlobalTime: { type: 'f', value: 0 },
+      amount: {type:'f',value: 0},
     },
     vertexShader: glslify('../shaders/pass_vert.glsl'),
-    fragmentShader: glslify('../shaders/pass_frag.glsl'),
+    fragmentShader: glslify('../shaders/end_frag.glsl'),
 
   };
 
@@ -562,11 +918,10 @@ function setupComposer() {
   return effectComposer;
 }
 
-makeChunks();
 
 const controls = new PointerLockControls( camera );
 scene.add( controls.getObject() );
-
+Tone.Listener.updatePosition(camera);
 
 var controlsEnabled = false;
 			var moveForward = false;
@@ -577,6 +932,11 @@ var controlsEnabled = false;
 			var velocity = new THREE.Vector3();
 
 
+const progress = new Progress();
+const chunkManager = new ChunkManager(servitor,progress);
+chunkManager.requestInitialChunks(new THREE.Vector3(10,3,10),new THREE.Vector3(-25,0,0));
+chunkManager.requestInitialChunks(new THREE.Vector3(10,3,10),new THREE.Vector3(-15,0,0));
+chunkManager.requestInitialChunks(new THREE.Vector3(30,10,30),new THREE.Vector3(0,0,0));
 
 app.start()
 resize()
@@ -669,3 +1029,54 @@ THREE.IsosurfaceGeometry = function(dims, map, bounds) {
 
 THREE.IsosurfaceGeometry.prototype = Object.create( THREE.Geometry.prototype );
 THREE.IsosurfaceGeometry.prototype.constructor = THREE.IsosurfaceGeometry;
+//from https://medium.com/@lachlantweedie/animation-in-three-js-using-tween-js-with-examples-c598a19b1263
+function animateVector3(vectorToAnimate, target, options){
+    options = options || {};
+    // get targets from options or set to defaults
+    var to = target || THREE.Vector3(),
+        easing = options.easing || TWEEN.Easing.Quadratic.In,
+        duration = options.duration || 2000;
+    // create the tween
+    var tweenVector3 = new TWEEN.Tween(vectorToAnimate)
+        .to({ x: to.x, y: to.y, z: to.z, }, duration)
+        .easing(easing)
+        .onUpdate(function(d) {
+            if(options.update){
+                options.update(d);
+            }
+         })
+        .onComplete(function(){
+          if(options.callback) options.callback();
+        });
+    // start the tween
+    tweenVector3.start();
+    // return the tween in case we want to manipulate it later on
+    return tweenVector3;
+}
+
+
+
+
+
+/**
+ *  Update the position of this panner based on 
+ *  a THREE.Object3D that is passed in.
+ *  Adapted from https://github.com/mrdoob/three.js/blob/dev/src/audio/PositionalAudio.js
+ *  @param  {THREE.Object3D}  object
+ *  @return  {Tone.Panner3D}  this
+ */
+Tone.Panner3D.prototype.updatePosition = (function(){
+
+	if (!THREE){
+		throw new Error("this method requires THREE.js");
+	}
+
+	var position = new THREE.Vector3();
+
+	return function(object){
+		position.setFromMatrixPosition(object.matrixWorld);
+		this.setPosition(position.x, position.y, position.z);
+	};
+}());
+
+
