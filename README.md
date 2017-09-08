@@ -1,4 +1,4 @@
-#Isosurface voxel experiment
+# Isosurface voxel experiment
 
 play at 
 https://isosurface.surge.sh/
